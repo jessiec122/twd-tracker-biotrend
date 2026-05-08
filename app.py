@@ -162,7 +162,7 @@ with tab1:
         update_id = st.selectbox("請選擇要處理的 Issue ID", df_active["Issue_ID"].tolist(), key="vendor_select")
         
         selected_issue = df[df["Issue_ID"] == update_id].iloc[0]
-    with st.container(border=True):
+        with st.container(border=True):
             desc_text = str(selected_issue['問題描述']).replace('\n', '  \n')
             st.markdown(f"**💬 客戶問題描述：** \n{desc_text}")
             img_bytes_list = base64_to_imgs(selected_issue["截圖_Base64"])
@@ -308,7 +308,8 @@ with tab4:
                     st.image(img_bytes, caption=f"提報截圖 {i+1}", width=IMG_THUMB_WIDTH)
         with col2:
             st.markdown("### 🛠️ 百昌回覆")
-            st.write(f"**處理說明:**\n{row['廠商回覆']}")
+            reply_text = str(row['廠商回覆']).replace('\n', '  \n')
+            st.markdown(f"**處理說明:** \n{reply_text}")
             vendor_img_list = base64_to_imgs(row.get("廠商截圖_Base64", ""))
             if vendor_img_list:
                 for i, img_bytes in enumerate(vendor_img_list):
