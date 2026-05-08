@@ -1,8 +1,8 @@
 # ==========================================
 # Configuration (參數與配置)
 # ==========================================
-DATA_FILE = "twd_data.csv"  # 沿用檔名以無縫讀取舊資料
-PAGE_TITLE = "TWD 供應商問題追蹤系統"
+DATA_FILE = "twd_data_v7.csv"  # 沿用檔名以無縫讀取舊資料
+PAGE_TITLE = "TWD 供應商問題追蹤系統 v8.1"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
@@ -47,7 +47,6 @@ def imgs_to_base64(uploaded_files, tag=""):
 def base64_to_imgs(base64_str, default_tag="歷史附件"):
     if pd.isna(base64_str): return []
     b_str = str(base64_str).strip()
-    # 判斷是否為封存佔位符或空值
     if b_str in ["", "[圖片已封存至本地端]"]: return []
     
     result = []
@@ -84,14 +83,12 @@ with st.sidebar:
         st.download_button("📥 下載全庫備份 (CSV)", data=csv_data, file_name=f"TWD_Backup_{datetime.now().strftime('%Y%m%d')}.csv", use_container_width=True)
         
         st.divider()
-        # --- 核心更新：圖片瘦身機制 ---
         st.markdown("### 2. 系統空間瘦身")
         closed_count = len(df[df["狀態"] == "已結案"])
         st.caption(f"目前有 **{closed_count}** 筆已結案資料。此功能將保留文字與統計數據，僅清除已結案的圖片檔案，以釋放系統記憶體。")
         
         if st.button("🧹 清空已結案圖片", type="primary", use_container_width=True):
             if closed_count > 0:
-                # 只把已結案的圖片欄位替換為提示文字，保留其他所有欄位
                 mask = df["狀態"] == "已結案"
                 df.loc[mask, "截圖_Base64"] = "[圖片已封存至本地端]"
                 df.loc[mask, "廠商截圖_Base64"] = "[圖片已封存至本地端]"
@@ -122,6 +119,7 @@ with tab1:
         st.dataframe(df_active[["Issue_ID", "建立日期", "優先級", "處理人", "問題描述", "模組", "狀態"]], use_container_width=True, height=250, hide_index=True)
         st.divider()
         
+        # 這裡保留你要求的 UX 防呆：廠商畫面預設為空，強迫選取
         update_id = st.selectbox("選擇處理編號", options=df_active["Issue_ID"].tolist(), index=None, placeholder="請選擇要更新的 Issue ID...")
         if update_id:
             row = df[df["Issue_ID"] == update_id].iloc[0]
@@ -168,7 +166,6 @@ with tab2:
         if st.form_submit_button("📢 提交問題"):
             if not desc.strip(): st.error("請輸入描述")
             else:
-                # 穩定的 ID 生成邏輯 (基於歷史最大數字)
                 if not df.empty:
                     last_id = df["Issue_ID"].str.extract(r'(\d+)').astype(int).max().iloc[0]
                     new_id = f"TWD-{last_id + 1:03d}"
@@ -180,45 +177,46 @@ with tab2:
 with tab3:
     df_review = df[df["狀態"] == "待覆核"]
     if not df_review.empty:
-        rid = st.selectbox("選擇確認項目", options=df_review["Issue_ID"].tolist(), index=None, placeholder="請選擇要覆核的 Issue ID...")
-        if rid:
-            row = df[df["Issue_ID"] == rid].iloc[0]
-            with st.container(border=True):
-                st.info(f"**處理人:** {row['處理人']} | **歷史紀錄：**\n\n{str(row['廠商回覆']).replace('\n', '  \n')}")
-                for t, img in base64_to_imgs(row.get("廠商截圖_Base64", ""), "歷史修復"): st.image(img, caption=t, width=IMG_THUMB_WIDTH)
-            
-            c1, c2 = st.columns(2)
-            if c1.button("✅ 結案", use_container_width=True):
+        # 恢復：取消 index=None，讓系統一進來就自動帶出第一筆待覆核的資料
+        rid = st.selectbox("選擇確認項目", df_review["Issue_ID"].tolist())
+        
+        row = df[df["Issue_ID"] == rid].iloc[0]
+        with st.container(border=True):
+            st.info(f"**處理人:** {row['處理人']} | **歷史紀錄：**\n\n{str(row['廠商回覆']).replace('\n', '  \n')}")
+            for t, img in base64_to_imgs(row.get("廠商截圖_Base64", ""), "歷史修復"):
+                st.image(img, caption=t, width=IMG_THUMB_WIDTH)
+        
+        c1, c2 = st.columns(2)
+        if c1.button("✅ 結案", use_container_width=True):
+            idx = df[df["Issue_ID"] == rid].index[0]
+            df.at[idx, "狀態"], df.at[idx, "最後更新"] = "已結案", datetime.now().strftime("%Y-%m-%d %H:%M")
+            save_data(df); st.rerun()
+        
+        q_reason_key, q_img_key = f"q_re_{rid}", f"q_im_{rid}"
+        reason = st.text_area("退回理由 ⭐", height=100, key=q_reason_key)
+        q_imgs = st.file_uploader("補充截圖", type=["png", "jpg"], accept_multiple_files=True, key=q_img_key)
+        if st.button("🔄 退回補充", type="primary", use_container_width=True):
+            if not reason.strip(): st.error("請寫理由")
+            else:
                 idx = df[df["Issue_ID"] == rid].index[0]
-                df.at[idx, "狀態"], df.at[idx, "最後更新"] = "已結案", datetime.now().strftime("%Y-%m-%d %H:%M")
-                save_data(df); st.rerun()
-            
-            q_reason_key, q_img_key = f"q_re_{rid}", f"q_im_{rid}"
-            reason = st.text_area("退回理由 ⭐", height=100, key=q_reason_key)
-            q_imgs = st.file_uploader("補充截圖", type=["png", "jpg"], accept_multiple_files=True, key=q_img_key)
-            if st.button("🔄 退回補充", type="primary", use_container_width=True):
-                if not reason.strip(): st.error("請寫理由")
-                else:
-                    idx = df[df["Issue_ID"] == rid].index[0]
-                    rt = int(df.at[idx, "退回次數"]) if str(df.at[idx, "退回次數"]).isdigit() else 0
-                    df.at[idx, "狀態"], df.at[idx, "退回次數"], df.at[idx, "最後更新"] = "退回重啟", str(rt + 1), datetime.now().strftime("%Y-%m-%d %H:%M")
-                    df.at[idx, "問題描述"] = str(df.at[idx, '問題描述']) + f"\n\n---\n📌 **[第 {rt+1} 次補充]** ({datetime.now().strftime('%m-%d %H:%M')}):\n{reason.strip()}"
-                    if q_imgs:
-                        new_q = imgs_to_base64(q_imgs, f"第 {rt+1} 次補充")
-                        old_q = str(df.at[idx, "截圖_Base64"]).strip()
-                        df.at[idx, "截圖_Base64"] = old_q + "||" + new_q if old_q else new_q
-                    save_data(df); clear_state([q_reason_key, q_img_key]); st.rerun()
-        else: st.info("👆 請從上方選擇一個處理編號。")
+                rt = int(df.at[idx, "退回次數"]) if str(df.at[idx, "退回次數"]).isdigit() else 0
+                df.at[idx, "狀態"], df.at[idx, "退回次數"], df.at[idx, "最後更新"] = "退回重啟", str(rt + 1), datetime.now().strftime("%Y-%m-%d %H:%M")
+                df.at[idx, "問題描述"] = str(df.at[idx, '問題描述']) + f"\n\n---\n📌 **[第 {rt+1} 次補充]** ({datetime.now().strftime('%m-%d %H:%M')}):\n{reason.strip()}"
+                if q_imgs:
+                    new_q = imgs_to_base64(q_imgs, f"第 {rt+1} 次補充")
+                    old_q = str(df.at[idx, "截圖_Base64"]).strip()
+                    df.at[idx, "截圖_Base64"] = old_q + "||" + new_q if old_q else new_q
+                save_data(df); clear_state([q_reason_key, q_img_key]); st.rerun()
     else: st.success("無待處理。")
 
 # --- Tab 4 & 5 (歷史與報表) ---
 with tab4:
-    sid = st.selectbox("查詢 ID", options=df["Issue_ID"].tolist() if not df.empty else [], index=None, placeholder="請選擇要查詢的 Issue ID...")
+    # 恢復：歷史紀錄也自動帶出第一筆
+    sid = st.selectbox("查詢 ID", df["Issue_ID"].tolist() if not df.empty else [])
     if sid:
         r = df[df["Issue_ID"] == sid].iloc[0]
         st.write(f"狀態: {r['狀態']} | 退回: {r['退回次數']} 次")
         
-        # 若圖片已被清理，顯示提示訊息
         is_purged_qav = str(r["截圖_Base64"]).strip() == "[圖片已封存至本地端]"
         is_purged_ven = str(r["廠商截圖_Base64"]).strip() == "[圖片已封存至本地端]"
         if is_purged_qav or is_purged_ven:
