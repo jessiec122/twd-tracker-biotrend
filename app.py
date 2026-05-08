@@ -1,14 +1,14 @@
 # ==========================================
-# Configuration (參數集中管理)
+# Configuration
 # ==========================================
-DATA_FILE = "twd_data_v3.csv"
-PAGE_TITLE = "TWD 供應商問題追蹤系統 v3.2"
+DATA_FILE = "twd_data_v5.csv"
+PAGE_TITLE = "TWD 供應商問題追蹤系統 v5.0"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
 
 # ==========================================
-# Logic Section (模組化邏輯區)
+# Logic Section
 # ==========================================
 import streamlit as st
 import pandas as pd
@@ -18,19 +18,18 @@ from datetime import datetime
 
 st.set_page_config(page_title=PAGE_TITLE, layout="wide")
 
-# --- 資料庫初始化 ---
 def init_db():
     if not os.path.exists(DATA_FILE):
         df = pd.DataFrame(columns=[
             "Issue_ID", "建立日期", "最後更新", "模組", "優先級", 
-            "處理人", "狀態", "問題描述", "截圖_Base64", "廠商回覆", "退回次數", "延續自ID"
+            "處理人", "狀態", "問題描述", "截圖_Base64", "廠商回覆", 
+            "廠商截圖_Base64", "退回次數", "延續自ID"
         ])
         df.to_csv(DATA_FILE, index=False)
 
 init_db()
 
 def load_data():
-    # 強制讀取為字串，徹底解決 TypeError 報錯
     df = pd.read_csv(DATA_FILE, dtype=str)
     return df.fillna("")
 
@@ -52,38 +51,64 @@ def base64_to_img(base64_str):
 
 df = load_data()
 
-# --- 側邊欄：統計與備份還原 ---
+# --- 側邊欄：統計與進階管理 ---
 with st.sidebar:
-    st.title("📊 TWD Eirgenix-百昌 問題集")
-    st.metric("總立案數", len(df))
-    st.metric("待處理項目", len(df[df["狀態"].isin(["已提報", "處理中", "退回重啟"])]))
+    st.title("📊 TWD Eirgenix-百昌")
+    st.metric("線上總立案數", len(df))
+    st.metric("待 QAV 確認", len(df[df["狀態"] == "待覆核"]))
     
     st.divider()
     
-    with st.expander("⚙️ 備份與管理", expanded=False):
-        st.caption("定期下載備份，以防雲端主機休眠資料遺失。")
-        csv_data = df.to_csv(index=False).encode('utf-8-sig')
+    with st.expander("⚙️ 備份與封存管理", expanded=False):
+        st.markdown("### 1. 區間備份 (不刪除資料)")
+        date_cols = st.columns(2)
+        with date_cols[0]:
+            start_date = st.date_input("開始日期", format="YYYY-MM-DD")
+        with date_cols[1]:
+            end_date = st.date_input("結束日期", format="YYYY-MM-DD")
+        
+        # 篩選區間資料
+        mask = (df["建立日期"] >= start_date.strftime("%Y-%m-%d")) & (df["建立日期"] <= end_date.strftime("%Y-%m-%d"))
+        df_filtered = df.loc[mask]
+        
         st.download_button(
-            label="📥 下載資料庫 (CSV 備份)", 
-            data=csv_data, 
-            file_name=f"TWD_DB_Backup_{datetime.now().strftime('%Y%m%d')}.csv", 
+            label=f"📥 下載區間資料 ({len(df_filtered)} 筆)", 
+            data=df_filtered.to_csv(index=False).encode('utf-8-sig'), 
+            file_name=f"TWD_Backup_{start_date.strftime('%Y%m%d')}_to_{end_date.strftime('%Y%m%d')}.csv", 
             mime='text/csv',
             use_container_width=True
         )
         
         st.divider()
-        st.caption("上傳備份檔即可還原資料。")
-        uploaded_backup = st.file_uploader("上傳備份檔 (CSV)", type=['csv'])
-        if uploaded_backup is not None:
-            if st.button("⚠️ 確認還原資料", use_container_width=True):
-                try:
-                    df_restore = pd.read_csv(uploaded_backup, dtype=str).fillna("")
-                    df_restore.to_csv(DATA_FILE, index=False)
-                    st.success("✅ 資料已成功還原！")
+        st.markdown("### 2. 封存結案項目 (下載並刪除)")
+        df_closed = df[df["狀態"] == "已結案"]
+        st.caption(f"目前有 **{len(df_closed)}** 筆已結案資料可封存。")
+        
+        if not df_closed.empty:
+            # 先準備好要下載的資料
+            archive_csv = df_closed.to_csv(index=False).encode('utf-8-sig')
+            
+            # 使用 Streamlit 的 download_button，當被點擊時，利用 session_state 來觸發刪除
+            if st.download_button(
+                label="📦 下載封存檔並準備刪除", 
+                data=archive_csv, 
+                file_name=f"TWD_Archive_{datetime.now().strftime('%Y%m%d')}.csv", 
+                mime='text/csv',
+                type="primary",
+                use_container_width=True
+            ):
+                st.session_state.archive_clicked = True
+            
+            if st.session_state.get('archive_clicked', False):
+                st.warning("⚠️ 檔案已下載，請確認。確認後點擊下方按鈕將這些資料從線上刪除。")
+                if st.button("🗑️ 確認從線上刪除已封存資料", type="primary", use_container_width=True):
+                    df_keep = df[df["狀態"] != "已結案"]
+                    save_data(df_keep)
+                    st.session_state.archive_clicked = False
+                    st.success("✅ 線上空間已清理完畢！系統將重新載入...")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"還原失敗: {e}")
 
+# ---  ---
 st.title(PAGE_TITLE)
 
 tab1, tab2, tab3, tab4 = st.tabs(["📋 任務看板 (百昌)", "➕ 提報/延續問題", "🔍 Eirgenix QAV確認", "📂 歷史檔案庫"])
@@ -93,15 +118,15 @@ with tab1:
     st.header("進行中任務清單")
     df_active = df[df["狀態"] != "已結案"]
     if not df_active.empty:
-        st.dataframe(df_active[["Issue_ID", "建立日期", "處理人", "優先級", "狀態", "問題描述"]], use_container_width=True)
+        # 優化表格：調整欄位順序、增加高度、隱藏 index
+        display_cols = ["Issue_ID", "優先級", "狀態", "模組", "處理人", "建立日期", "問題描述"]
+        st.dataframe(df_active[display_cols], use_container_width=True, height=250, hide_index=True)
         
         st.divider()
         st.subheader("📝 百昌回覆與進度更新")
         
-        # 選擇 Issue ID
         update_id = st.selectbox("請選擇要處理的 Issue ID", df_active["Issue_ID"].tolist(), key="vendor_select")
         
-        # 即時顯示問題背景與截圖
         selected_issue = df[df["Issue_ID"] == update_id].iloc[0]
         with st.container(border=True):
             st.markdown(f"**💬 客戶問題描述：**\n\n{selected_issue['問題描述']}")
@@ -111,15 +136,16 @@ with tab1:
             else:
                 st.caption("*(此問題目前無附截圖)*")
 
-        # 認領人與回覆內容
         current_assignee = selected_issue["處理人"]
         default_idx = VENDORS_LIST.index(current_assignee) if current_assignee in VENDORS_LIST else 0
         
+        # 廠商回覆區新增截圖功能
         col_up1, col_up2 = st.columns([1, 2])
         with col_up1:
             new_assignee = st.selectbox("認領人", VENDORS_LIST, index=default_idx)
+            vendor_img_file = st.file_uploader("上傳處理結果截圖 (選填)", type=["png", "jpg", "jpeg"], key="vendor_img")
         with col_up2:
-            reply_text = st.text_area("填寫處理進度或解決方法", value=selected_issue["廠商回覆"])
+            reply_text = st.text_area("填寫處理進度或解決方法", value=selected_issue["廠商回覆"], height=150)
         
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
@@ -128,6 +154,8 @@ with tab1:
                 df.at[idx, "處理人"] = new_assignee
                 df.at[idx, "廠商回覆"] = reply_text
                 df.at[idx, "最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                if vendor_img_file:
+                    df.at[idx, "廠商截圖_Base64"] = img_to_base64(vendor_img_file)
                 if df.at[idx, "狀態"] == "已提報":
                     df.at[idx, "狀態"] = "處理中"
                 save_data(df)
@@ -140,6 +168,8 @@ with tab1:
                 df.at[idx, "廠商回覆"] = reply_text
                 df.at[idx, "狀態"] = "待覆核"
                 df.at[idx, "最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                if vendor_img_file:
+                    df.at[idx, "廠商截圖_Base64"] = img_to_base64(vendor_img_file)
                 save_data(df)
                 st.success(f"{update_id} 已提交給 Eirgenix 確認！")
                 st.rerun()
@@ -168,7 +198,7 @@ with tab2:
                     "最後更新": datetime.now().strftime("%Y-%m-%d"), "模組": module,
                     "優先級": priority, "處理人": assignee, "狀態": "已提報", 
                     "問題描述": desc, "截圖_Base64": img_b64, "廠商回覆": "", 
-                    "退回次數": "0", "延續自ID": link_id
+                    "廠商截圖_Base64": "", "退回次數": "0", "延續自ID": link_id
                 }
                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                 save_data(df)
@@ -184,7 +214,12 @@ with tab3:
     if not df_review.empty:
         review_id = st.selectbox("選擇要確認的項目", df_review["Issue_ID"].tolist())
         row = df[df["Issue_ID"] == review_id].iloc[0]
-        st.info(f"**處理人:** {row['處理人']} | **廠商最新回覆:** {row['廠商回覆']}")
+        
+        with st.container(border=True):
+            st.info(f"**處理人:** {row['處理人']} | **廠商最新回覆:** {row['廠商回覆']}")
+            vendor_img_bytes = base64_to_img(row.get("廠商截圖_Base64", ""))
+            if vendor_img_bytes:
+                st.image(vendor_img_bytes, caption="廠商提供的修復截圖", width=500)
         
         col1, col2 = st.columns(2)
         with col1:
@@ -200,7 +235,6 @@ with tab3:
             if st.button("❌ 未解決 (退回重啟)"):
                 idx = df[df["Issue_ID"] == review_id].index[0]
                 df.at[idx, "狀態"] = "退回重啟"
-                # 安全處理退回次數
                 current_returns = int(df.at[idx, "退回次數"]) if str(df.at[idx, "退回次數"]).isdigit() else 0
                 df.at[idx, "退回次數"] = str(current_returns + 1)
                 df.at[idx, "最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -221,11 +255,17 @@ with tab4:
         st.write(f"**建立日期:** {row['建立日期']} | **處理人:** {row['處理人']} | **狀態:** {row['狀態']} | **退回次數:** {row['退回次數']}")
         if row['延續自ID']:
             st.write(f"**🔗 延續自:** {row['延續自ID']}")
-        st.write(f"**問題描述:** {row['問題描述']}")
-        st.write(f"**廠商回覆:** {row['廠商回覆']}")
         
-        img_bytes = base64_to_img(row["截圖_Base64"])
-        if img_bytes:
-            st.image(img_bytes, caption=f"{search_id} 截圖詳情")
-        else:
-            st.info("此問題無附截圖。")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("### 📝 Eirgenix 提報")
+            st.write(f"**問題描述:**\n{row['問題描述']}")
+            img_bytes = base64_to_img(row["截圖_Base64"])
+            if img_bytes:
+                st.image(img_bytes, caption="提報截圖")
+        with col2:
+            st.markdown("### 🛠️ 百昌回覆")
+            st.write(f"**處理說明:**\n{row['廠商回覆']}")
+            vendor_img_bytes = base64_to_img(row.get("廠商截圖_Base64", ""))
+            if vendor_img_bytes:
+                st.image(vendor_img_bytes, caption="廠商修復截圖")
