@@ -1,11 +1,12 @@
 # ==========================================
 # Configuration
 # ==========================================
-DATA_FILE = "twd_data_v5.csv"  # 維持 v5 檔名以無縫接軌現有資料
-PAGE_TITLE = "TWD 供應商問題追蹤系統"
+DATA_FILE = "twd_data_v5.csv"  
+PAGE_TITLE = "TWD 供應商問題追蹤系統 v6.1"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
+IMG_THUMB_WIDTH = 300  # 統一設定縮圖寬度
 
 # ==========================================
 # Logic Section
@@ -36,7 +37,6 @@ def load_data():
 def save_data(df):
     df.to_csv(DATA_FILE, index=False)
 
-# --- 升級：支援多圖 Base64 轉換 ---
 def imgs_to_base64(uploaded_files):
     if not uploaded_files:
         return ""
@@ -45,7 +45,7 @@ def imgs_to_base64(uploaded_files):
     b64_list = []
     for f in uploaded_files:
         b64_list.append(base64.b64encode(f.read()).decode('utf-8'))
-    return "||".join(b64_list) # 使用 || 作為多張圖片的分隔符
+    return "||".join(b64_list)
 
 def base64_to_imgs(base64_str):
     if pd.isna(base64_str) or str(base64_str).strip() == "":
@@ -128,6 +128,22 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"還原失敗: {e}")
 
+# === 測試階段專用：一鍵清空資料 (上線前請將此區塊刪除或註解掉) ===
+    with st.expander("🛠️ 測試工具：清空系統資料", expanded=False):
+        st.warning("警告：這將會刪除目前所有的測試紀錄！")
+        if st.button("🗑️ 確定清空所有資料", type="primary", use_container_width=True):
+            # 建立一個只有標題的空 DataFrame 覆蓋原本的檔案
+            empty_df = pd.DataFrame(columns=[
+                "Issue_ID", "建立日期", "最後更新", "模組", "優先級", 
+                "處理人", "狀態", "問題描述", "截圖_Base64", "廠商回覆", 
+                "廠商截圖_Base64", "退回次數", "延續自ID"
+            ])
+            empty_df.to_csv(DATA_FILE, index=False)
+            st.success("✅ 系統資料已全部清空！")
+            st.rerun()
+    # =========================================================
+
+
 st.title(PAGE_TITLE)
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 任務看板 (百昌)", "➕ 提報/延續問題", "🔍 Eirgenix QAV確認", "📂 歷史檔案庫", "📈 數據報表"])
@@ -148,12 +164,12 @@ with tab1:
         selected_issue = df[df["Issue_ID"] == update_id].iloc[0]
         with st.container(border=True):
             st.markdown(f"**💬 客戶問題描述：**\n\n{selected_issue['問題描述']}")
-            # 支援多圖顯示
             img_bytes_list = base64_to_imgs(selected_issue["截圖_Base64"])
             if img_bytes_list:
-                cols = st.columns(min(len(img_bytes_list), 3)) # 最多並排三張
+                cols = st.columns(min(len(img_bytes_list), 3))
                 for i, img_bytes in enumerate(img_bytes_list):
-                    cols[i % 3].image(img_bytes, caption=f"附件截圖 {i+1}", use_container_width=True)
+                    # 取消強制撐滿寬度，改用固定縮圖大小
+                    cols[i % 3].image(img_bytes, caption=f"附件截圖 {i+1}", width=IMG_THUMB_WIDTH)
             else:
                 st.caption("*(此問題目前無附截圖)*")
 
@@ -163,7 +179,6 @@ with tab1:
         col_up1, col_up2 = st.columns([1, 2])
         with col_up1:
             new_assignee = st.selectbox("認領人", VENDORS_LIST, index=default_idx)
-            # 支援多圖上傳
             vendor_img_files = st.file_uploader("上傳處理結果截圖 (可多選)", type=["png", "jpg", "jpeg"], accept_multiple_files=True, key="vendor_img")
         with col_up2:
             reply_text = st.text_area("填寫處理進度或解決方法", value=selected_issue["廠商回覆"], height=150)
@@ -208,7 +223,6 @@ with tab2:
         with c4: link_id = st.text_input("延續自 ID (例如 TWD-001)")
         
         desc = st.text_area("詳細問題描述 (請盡量清楚)")
-        # 支援多圖上傳
         img_files = st.file_uploader("上傳截圖 (可多選, PNG/JPG)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
         
         if st.form_submit_button("📢 提交問題"):
@@ -243,7 +257,8 @@ with tab3:
             if vendor_img_bytes_list:
                 cols = st.columns(min(len(vendor_img_bytes_list), 3))
                 for i, img_bytes in enumerate(vendor_img_bytes_list):
-                    cols[i % 3].image(img_bytes, caption=f"廠商回覆截圖 {i+1}", use_container_width=True)
+                    # 取消強制撐滿寬度，改用固定縮圖大小
+                    cols[i % 3].image(img_bytes, caption=f"廠商回覆截圖 {i+1}", width=IMG_THUMB_WIDTH)
         
         col1, col2 = st.columns(2)
         with col1:
@@ -255,7 +270,6 @@ with tab3:
                 st.success(f"{review_id} 已順利結案！")
                 st.rerun()
         with col2:
-            # 語氣溫和化
             reason = st.text_input("無法結案原因 / 需補充說明", key=f"reason_{review_id}")
             if st.button("🔄 需補充資訊 (退回討論)"):
                 idx = df[df["Issue_ID"] == review_id].index[0]
@@ -277,7 +291,6 @@ with tab4:
     search_id = st.selectbox("請選擇 Issue ID 查看詳情", df["Issue_ID"].tolist() if not df.empty else [])
     if search_id:
         row = df[df["Issue_ID"] == search_id].iloc[0]
-        # UI 顯示轉換為中性詞彙
         display_returns = row['退回次數'] if str(row['退回次數']).isdigit() else "0"
         st.write(f"**建立日期:** {row['建立日期']} | **處理人:** {row['處理人']} | **狀態:** {row['狀態']} | **重新討論次數:** {display_returns}")
         if row['延續自ID']:
@@ -290,16 +303,18 @@ with tab4:
             qav_img_list = base64_to_imgs(row["截圖_Base64"])
             if qav_img_list:
                 for i, img_bytes in enumerate(qav_img_list):
-                    st.image(img_bytes, caption=f"提報截圖 {i+1}")
+                    # 取消強制撐滿寬度，改用固定縮圖大小
+                    st.image(img_bytes, caption=f"提報截圖 {i+1}", width=IMG_THUMB_WIDTH)
         with col2:
             st.markdown("### 🛠️ 百昌回覆")
             st.write(f"**處理說明:**\n{row['廠商回覆']}")
             vendor_img_list = base64_to_imgs(row.get("廠商截圖_Base64", ""))
             if vendor_img_list:
                 for i, img_bytes in enumerate(vendor_img_list):
-                    st.image(img_bytes, caption=f"廠商修復截圖 {i+1}")
+                    # 取消強制撐滿寬度，改用固定縮圖大小
+                    st.image(img_bytes, caption=f"廠商修復截圖 {i+1}", width=IMG_THUMB_WIDTH)
 
-# --- Tab 5: 數據報表 (中性語氣優化) ---
+# --- Tab 5: 數據報表 ---
 with tab5:
     st.header("📊 專案協作與案件複雜度分析")
     st.caption("此報表協助評估專案進度、釐清系統模組狀況，並識別需要額外資源協助的複雜案件。")
@@ -355,7 +370,6 @@ with tab5:
         if not closed_df.empty:
             slowest_issues = closed_df.sort_values(by="處理天數", ascending=False).head(5)
             display_slowest = slowest_issues[["Issue_ID", "模組", "處理人", "處理天數", "退回次數", "問題描述"]]
-            # 在表格顯示上，將欄位名稱替換為中性詞彙
             display_slowest = display_slowest.rename(columns={"退回次數": "重新討論次數"})
             st.dataframe(display_slowest, use_container_width=True, hide_index=True)
         else:
