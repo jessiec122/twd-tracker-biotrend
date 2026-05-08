@@ -14,7 +14,7 @@ from datetime import datetime
 
 # 初始化
 if not os.path.exists(IMG_FOLDER):
-    os.makedirs(IMG_FOLDER)
+os.makedirs(IMG_FOLDER, exist_exist=True)
 
 def load_data():
     if os.path.exists(DATA_FILE):
