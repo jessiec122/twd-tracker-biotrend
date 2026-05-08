@@ -114,7 +114,7 @@ with tab2:
     st.header("提報新問題或延續舊案")
     with st.form("new_issue_form", clear_on_submit=True):
         c1, c2, c3, c4 = st.columns(4)
-        with c1: module = st.selectbox("模組", ["Complaint", "Audit", "Supplier", "Others"])
+        with c1: module = st.selectbox("模組", ["TWD overall", "QMS", "DMS", "TMS", "Other"])
         with c2: assignee = st.selectbox("指定處理人 (預設不指派)", VENDORS_LIST, index=0)
         with c3: priority = st.selectbox("優先級", ["一般", "高", "緊急(影響GMP)"])
         with c4: link_id = st.text_input("延續自 ID (例如 TWD-001)")
