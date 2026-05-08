@@ -1,8 +1,8 @@
 # ==========================================
 # Configuration
 # ==========================================
-DATA_FILE = "twd_data_v5.csv"  
-PAGE_TITLE = "TWD 供應商問題追蹤系統 v6.1"
+DATA_FILE = "twd_data.csv"  
+PAGE_TITLE = "TWD 供應商問題追蹤系統"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
