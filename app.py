@@ -1,8 +1,8 @@
 # ==========================================
 # Configuration (系統參數與配置設定)
 # ==========================================
-DATA_FILE = "twd_data_v7.csv"                 # 資料庫檔案名稱 (沿用以無縫讀取舊資料)
-PAGE_TITLE = "TWD 供應商問題追蹤系統 v8.3"      # 網頁顯示標題
+DATA_FILE = "twd_data.csv"                 # 資料庫檔案名稱 (沿用以無縫讀取舊資料)
+PAGE_TITLE = "TWD 供應商問題追蹤系統"      # 網頁顯示標題
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"] # 廠商處理人清單
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"] # 系統模組分類
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]  # 優先級選項
@@ -67,7 +67,7 @@ with st.sidebar:
     if os.path.exists(LOGO_FILE):
         st.image(LOGO_FILE, width=100)
     
-    st.title("📊 專案監控看板")
+    st.title("Dashboard")
     st.metric("總立案數量", len(df))
     st.metric("待百昌處理", len(df[df["狀態"].isin(["已提報", "處理中", "退回重啟"])]))
     st.metric("待 Eirgenix QAV 確認", len(df[df["狀態"] == "待覆核"]))
@@ -122,7 +122,7 @@ with tab1:
         if update_id:
             row = df[df["Issue_ID"] == update_id].iloc[0]
             with st.container(border=True):
-                st.markdown(f"**💬 客戶問題紀錄：**\n\n{str(row['問題描述']).replace('\n', '  \n')}")
+                st.markdown(f"**💬 問題：**\n\n{str(row['問題描述']).replace('\n', '  \n')}")
                 for tag, img in base64_to_imgs(row["截圖_Base64"], "初始提報"): st.image(img, caption=tag, width=IMG_THUMB_WIDTH)
 
             # 表單狀態隔離
