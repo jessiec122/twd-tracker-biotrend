@@ -2,7 +2,7 @@
 # Configuration
 # ==========================================
 DATA_FILE = "twd_data_v5.csv"
-PAGE_TITLE = "TWD 供應商問題追蹤系統 v5.0"
+PAGE_TITLE = "TWD 供應商問題追蹤系統 v5.1"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
@@ -54,8 +54,11 @@ df = load_data()
 # --- 側邊欄：統計與進階管理 ---
 with st.sidebar:
     st.title("📊 TWD Eirgenix-百昌")
-    st.metric("線上總立案數", len(df))
-    st.metric("待 QAV 確認", len(df[df["狀態"] == "待覆核"]))
+    
+    # 修正：左側三種狀態數量
+    st.metric("總立案數量", len(df))
+    st.metric("待百昌處理", len(df[df["狀態"].isin(["已提報", "處理中", "退回重啟"])]))
+    st.metric("待 Eirgenix QAV 確認", len(df[df["狀態"] == "待覆核"]))
     
     st.divider()
     
@@ -63,11 +66,10 @@ with st.sidebar:
         st.markdown("### 1. 區間備份 (不刪除資料)")
         date_cols = st.columns(2)
         with date_cols[0]:
-            start_date = st.date_input("開始日期", format="YYYY-MM-DD")
+            start_date = st.date_input("開始日期", format="YYYY/MM/DD")
         with date_cols[1]:
-            end_date = st.date_input("結束日期", format="YYYY-MM-DD")
+            end_date = st.date_input("結束日期", format="YYYY/MM/DD")
         
-        # 篩選區間資料
         mask = (df["建立日期"] >= start_date.strftime("%Y-%m-%d")) & (df["建立日期"] <= end_date.strftime("%Y-%m-%d"))
         df_filtered = df.loc[mask]
         
@@ -85,10 +87,7 @@ with st.sidebar:
         st.caption(f"目前有 **{len(df_closed)}** 筆已結案資料可封存。")
         
         if not df_closed.empty:
-            # 先準備好要下載的資料
             archive_csv = df_closed.to_csv(index=False).encode('utf-8-sig')
-            
-            # 使用 Streamlit 的 download_button，當被點擊時，利用 session_state 來觸發刪除
             if st.download_button(
                 label="📦 下載封存檔並準備刪除", 
                 data=archive_csv, 
@@ -107,19 +106,32 @@ with st.sidebar:
                     st.session_state.archive_clicked = False
                     st.success("✅ 線上空間已清理完畢！系統將重新載入...")
                     st.rerun()
+                    
+        st.divider()
+        st.caption("上傳備份檔即可還原覆蓋線上資料。")
+        uploaded_backup = st.file_uploader("上傳備份檔 (CSV)", type=['csv'])
+        if uploaded_backup is not None:
+            if st.button("⚠️ 確認還原資料", use_container_width=True):
+                try:
+                    df_restore = pd.read_csv(uploaded_backup, dtype=str).fillna("")
+                    df_restore.to_csv(DATA_FILE, index=False)
+                    st.success("✅ 資料已成功還原！")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"還原失敗: {e}")
 
-# ---  ---
 st.title(PAGE_TITLE)
 
-tab1, tab2, tab3, tab4 = st.tabs(["📋 任務看板 (百昌)", "➕ 提報/延續問題", "🔍 Eirgenix QAV確認", "📂 歷史檔案庫"])
+# 新增了 Tab 5: 數據報表
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 任務看板 (百昌)", "➕ 提報/延續問題", "🔍 Eirgenix QAV確認", "📂 歷史檔案庫", "📈 數據報表"])
 
 # --- Tab 1: 任務看板 (百昌查看與回覆) ---
 with tab1:
     st.header("進行中任務清單")
     df_active = df[df["狀態"] != "已結案"]
     if not df_active.empty:
-        # 優化表格：調整欄位順序、增加高度、隱藏 index
-        display_cols = ["Issue_ID", "優先級", "狀態", "模組", "處理人", "建立日期", "問題描述"]
+        # 修正：依照要求調整欄位順序
+        display_cols = ["Issue_ID", "建立日期", "優先級", "處理人", "問題描述", "模組", "狀態"]
         st.dataframe(df_active[display_cols], use_container_width=True, height=250, hide_index=True)
         
         st.divider()
@@ -139,7 +151,6 @@ with tab1:
         current_assignee = selected_issue["處理人"]
         default_idx = VENDORS_LIST.index(current_assignee) if current_assignee in VENDORS_LIST else 0
         
-        # 廠商回覆區新增截圖功能
         col_up1, col_up2 = st.columns([1, 2])
         with col_up1:
             new_assignee = st.selectbox("認領人", VENDORS_LIST, index=default_idx)
@@ -269,3 +280,25 @@ with tab4:
             vendor_img_bytes = base64_to_img(row.get("廠商截圖_Base64", ""))
             if vendor_img_bytes:
                 st.image(vendor_img_bytes, caption="廠商修復截圖")
+
+# --- Tab 5: 數據報表 ---
+with tab5:
+    st.header("專案進度數據報表")
+    if not df.empty:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("整體問題狀態分佈")
+            status_counts = df["狀態"].value_counts()
+            st.bar_chart(status_counts)
+            
+        with col2:
+            st.subheader("各處理人負載 (僅計算未結案)")
+            active_df = df[df["狀態"] != "已結案"]
+            if not active_df.empty:
+                assignee_counts = active_df["處理人"].value_counts()
+                st.bar_chart(assignee_counts)
+            else:
+                st.info("目前所有任務皆已結案！")
+    else:
+        st.info("尚無數據可供分析。")
