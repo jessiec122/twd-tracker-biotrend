@@ -1,8 +1,8 @@
 # ==========================================
 # Configuration (參數與配置)
 # ==========================================
-DATA_FILE = "twd_data.csv"
-PAGE_TITLE = "TWD 供應商問題追蹤系統4"
+DATA_FILE = "twd_data_v7.csv"
+PAGE_TITLE = "TWD 供應商問題追蹤系統 v7.5"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
@@ -38,15 +38,33 @@ def load_data():
 def save_data(df):
     df.to_csv(DATA_FILE, index=False)
 
-def imgs_to_base64(uploaded_files):
+# --- 升級：支援標籤的 Base64 圖片轉換 ---
+def imgs_to_base64(uploaded_files, tag=""):
     if not uploaded_files: return ""
     if not isinstance(uploaded_files, list): uploaded_files = [uploaded_files]
-    b64_list = [base64.b64encode(f.read()).decode('utf-8') for f in uploaded_files]
+    b64_list = []
+    for f in uploaded_files:
+        b64_str = base64.b64encode(f.read()).decode('utf-8')
+        # 如果有傳入 tag，就用 "Tag::Base64" 的格式儲存
+        b64_list.append(f"{tag}::{b64_str}" if tag else b64_str)
     return "||".join(b64_list)
 
-def base64_to_imgs(base64_str):
+def base64_to_imgs(base64_str, default_tag="歷史附件"):
     if pd.isna(base64_str) or str(base64_str).strip() == "": return []
-    return [base64.b64decode(b) for b in str(base64_str).split("||") if b.strip()]
+    result = []
+    for b in str(base64_str).split("||"):
+        b = b.strip()
+        if not b: continue
+        # 判斷是否有標籤，沒有的話就用 default_tag (相容舊資料)
+        if "::" in b:
+            tag, b64_data = b.split("::", 1)
+        else:
+            tag, b64_data = default_tag, b
+        try:
+            result.append((tag, base64.b64decode(b64_data)))
+        except:
+            pass
+    return result
 
 df = load_data()
 
@@ -100,14 +118,15 @@ with tab1:
         selected_issue = df[df["Issue_ID"] == update_id].iloc[0]
         
         with st.container(border=True):
-            # 拔除置頂邏輯，回歸原汁原味的歷史對話
             desc_text = str(selected_issue['問題描述']).replace('\n', '  \n')
             st.markdown(f"**💬 客戶問題與歷史補充紀錄：**\n\n{desc_text}")
             
-            imgs = base64_to_imgs(selected_issue["截圖_Base64"])
+            # 解析並顯示帶有標籤的 QAV 圖片
+            imgs = base64_to_imgs(selected_issue["截圖_Base64"], "初始提報")
             if imgs:
                 cols = st.columns(3)
-                for i, img in enumerate(imgs): cols[i % 3].image(img, caption=f"提報附件 {i+1}", width=IMG_THUMB_WIDTH)
+                for i, (tag, img_bytes) in enumerate(imgs): 
+                    cols[i % 3].image(img_bytes, caption=f"{tag}", width=IMG_THUMB_WIDTH)
 
         col_up1, col_up2 = st.columns([1, 2])
         with col_up1:
@@ -118,37 +137,25 @@ with tab1:
             
         with col_up2:
             reply_text = st.text_area("填寫處理進度 (請簡述本次修復內容)", height=150)
-            
             st.caption("歷史回覆紀錄：")
             st.info(str(selected_issue["廠商回覆"]).replace('\n', '  \n') if selected_issue["廠商回覆"] else "尚無回覆紀錄")
 
-        # 定義儲存與累加廠商回覆的邏輯
         def append_vendor_reply(idx, new_assignee, new_status, text, imgs_files):
-            df.at[idx, "處理人"] = new_assignee
-            df.at[idx, "狀態"] = new_status
-            df.at[idx, "最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            df.at[idx, "處理人"], df.at[idx, "狀態"], df.at[idx, "最後更新"] = new_assignee, new_status, datetime.now().strftime("%Y-%m-%d %H:%M")
             
-            # 累加文字紀錄
+            old_reply = str(df.at[idx, "廠商回覆"]).strip()
+            reply_count = old_reply.count("💬 **[第") + 1
+            
             if text.strip() or imgs_files:
                 content = text.strip() if text.strip() else "(僅更新截圖)"
-                old_reply = str(df.at[idx, "廠商回覆"]).strip()
-                # 抓取目前已經有幾次對話紀錄，產生序號
-                reply_count = old_reply.count("💬 **[第") + 1
                 new_append = f"💬 **[第 {reply_count} 次廠商回覆]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{content}"
-                
-                if old_reply:
-                    df.at[idx, "廠商回覆"] = old_reply + "\n\n---\n" + new_append
-                else:
-                    df.at[idx, "廠商回覆"] = new_append
+                df.at[idx, "廠商回覆"] = old_reply + "\n\n---\n" + new_append if old_reply else new_append
             
-            # 累加圖片紀錄 (不會覆蓋舊圖片)
             if imgs_files:
-                new_b64 = imgs_to_base64(imgs_files)
+                # 加上第幾次回覆的標籤
+                new_b64 = imgs_to_base64(imgs_files, tag=f"第 {reply_count} 次修復")
                 old_b64 = str(df.at[idx, "廠商截圖_Base64"]).strip()
-                if old_b64:
-                    df.at[idx, "廠商截圖_Base64"] = old_b64 + "||" + new_b64
-                else:
-                    df.at[idx, "廠商截圖_Base64"] = new_b64
+                df.at[idx, "廠商截圖_Base64"] = old_b64 + "||" + new_b64 if old_b64 else new_b64
 
         c1, c2 = st.columns(2)
         if c1.button("💾 僅儲存進度"):
@@ -174,7 +181,9 @@ with tab2:
         imgs = st.file_uploader("上傳截圖 (可多選)", type=["png", "jpg", "jpeg"], accept_multiple_files=True, key="new_issue_imgs")
         if st.form_submit_button("📢 提交問題"):
             new_id = f"TWD-{len(df)+1:03d}"
-            new_row = {"Issue_ID": new_id, "建立日期": datetime.now().strftime("%Y-%m-%d"), "最後更新": datetime.now().strftime("%Y-%m-%d"), "模組": module, "優先級": priority, "處理人": assignee, "狀態": "已提報", "問題描述": desc, "截圖_Base64": imgs_to_base64(imgs), "廠商回覆": "", "廠商截圖_Base64": "", "退回次數": "0", "延續自ID": link_id}
+            # 初始提報自動打上標籤
+            img_b64_str = imgs_to_base64(imgs, tag="初始提報")
+            new_row = {"Issue_ID": new_id, "建立日期": datetime.now().strftime("%Y-%m-%d"), "最後更新": datetime.now().strftime("%Y-%m-%d"), "模組": module, "優先級": priority, "處理人": assignee, "狀態": "已提報", "問題描述": desc, "截圖_Base64": img_b64_str, "廠商回覆": "", "廠商截圖_Base64": "", "退回次數": "0", "延續自ID": link_id}
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             save_data(df); st.rerun()
 
@@ -191,10 +200,12 @@ with tab3:
             reply_display = str(row['廠商回覆']).replace('\n', '  \n')
             st.info(reply_display if reply_display.strip() else "無紀錄")
             
-            v_imgs = base64_to_imgs(row.get("廠商截圖_Base64", ""))
-            if v_imgs:
+            # 顯示帶有標籤的廠商圖片
+            v_imgs_list = base64_to_imgs(row.get("廠商截圖_Base64", ""), "歷史修復")
+            if v_imgs_list:
                 cols = st.columns(3)
-                for i, img in enumerate(v_imgs): cols[i % 3].image(img, caption=f"修復歷史圖檔 {i+1}", width=IMG_THUMB_WIDTH)
+                for i, (tag, img_bytes) in enumerate(v_imgs_list): 
+                    cols[i % 3].image(img_bytes, caption=f"{tag}", width=IMG_THUMB_WIDTH)
         
         c1, c2 = st.columns(2)
         with c1:
@@ -204,7 +215,10 @@ with tab3:
                 save_data(df); st.rerun()
         
         with c2:
-            reason = st.text_area("無法結案原因 (將完整附加於歷史紀錄中)", height=100)
+            # --- 新增：QAV 退回時也可以上傳截圖 ---
+            reason = st.text_area("無法結案原因 (必填)", height=100)
+            qav_imgs = st.file_uploader("上傳補充說明截圖 (可多選)", type=["png", "jpg", "jpeg"], accept_multiple_files=True, key=f"qav_img_{review_id}")
+            
             if st.button("🔄 需補充資訊 (退回討論)", use_container_width=True):
                 if not reason.strip():
                     st.error("⚠️ 請填寫退回原因，廠商才能知道哪裡需要補充！")
@@ -214,9 +228,17 @@ with tab3:
                     current_returns = int(df.at[idx, "退回次數"]) if str(df.at[idx, "退回次數"]).isdigit() else 0
                     df.at[idx, "退回次數"] = str(current_returns + 1)
                     df.at[idx, "最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    # QAV 歷史紀錄累加邏輯
+                    
+                    # 累加文字
                     new_append = f"\n\n---\n📌 **[第 {current_returns + 1} 次補充說明]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{reason}"
                     df.at[idx, "問題描述"] = str(df.at[idx, '問題描述']) + new_append
+                    
+                    # 累加圖片並加上標籤
+                    if qav_imgs:
+                        new_qav_b64 = imgs_to_base64(qav_imgs, tag=f"第 {current_returns + 1} 次補充")
+                        old_qav_b64 = str(df.at[idx, "截圖_Base64"]).strip()
+                        df.at[idx, "截圖_Base64"] = old_qav_b64 + "||" + new_qav_b64 if old_qav_b64 else new_qav_b64
+                        
                     save_data(df); st.rerun()
     else: st.success("目前無待確認項目。")
 
@@ -231,11 +253,13 @@ with tab4:
         with c1:
             st.markdown("### 📝 Eirgenix 提報與補充")
             st.write(str(row['問題描述']).replace('\n', '  \n'))
-            for img in base64_to_imgs(row["截圖_Base64"]): st.image(img, width=IMG_THUMB_WIDTH)
+            for tag, img in base64_to_imgs(row["截圖_Base64"], "初始提報"): 
+                st.image(img, caption=tag, width=IMG_THUMB_WIDTH)
         with c2:
             st.markdown("### 🛠️ 百昌回覆與進度")
             st.write(str(row['廠商回覆']).replace('\n', '  \n'))
-            for img in base64_to_imgs(row.get("廠商截圖_Base64", "")): st.image(img, width=IMG_THUMB_WIDTH)
+            for tag, img in base64_to_imgs(row.get("廠商截圖_Base64", ""), "歷史修復"): 
+                st.image(img, caption=tag, width=IMG_THUMB_WIDTH)
 
 # --- Tab 5: 數據報表 ---
 with tab5:
