@@ -132,7 +132,6 @@ with st.sidebar:
     with st.expander("🛠️ 測試工具：清空系統資料", expanded=False):
         st.warning("警告：這將會刪除目前所有的測試紀錄！")
         if st.button("🗑️ 確定清空所有資料", type="primary", use_container_width=True):
-            # 建立一個只有標題的空 DataFrame 覆蓋原本的檔案
             empty_df = pd.DataFrame(columns=[
                 "Issue_ID", "建立日期", "最後更新", "模組", "優先級", 
                 "處理人", "狀態", "問題描述", "截圖_Base64", "廠商回覆", 
@@ -141,8 +140,7 @@ with st.sidebar:
             empty_df.to_csv(DATA_FILE, index=False)
             st.success("✅ 系統資料已全部清空！")
             st.rerun()
-    # =========================================================
-
+# =========================================================
 
 st.title(PAGE_TITLE)
 
@@ -163,13 +161,27 @@ with tab1:
         
         selected_issue = df[df["Issue_ID"] == update_id].iloc[0]
         with st.container(border=True):
-            desc_text = str(selected_issue['問題描述']).replace('\n', '  \n')
-            st.markdown(f"**💬 客戶問題描述：** \n{desc_text}")
+            # ===== 關鍵修改：將 QAV 的補充說明獨立抓出來並使用黃色警告框高光顯示 =====
+            full_desc = str(selected_issue['問題描述'])
+            if "[QAV 補充說明]:" in full_desc:
+                # 切割出原始問題與所有的補充說明
+                parts = full_desc.split("[QAV 補充說明]:")
+                original_desc = parts[0].strip().replace('\n', '  \n')
+                st.markdown(f"**💬 客戶問題描述：** \n{original_desc}")
+                
+                # 遍歷所有的退件原因 (支援多次退回)
+                qav_reasons = parts[1:]
+                for i, reason_text in enumerate(qav_reasons):
+                    st.warning(f"**🚨 需補充資訊 / 重新討論 (第 {i+1} 次)：** \n{reason_text.strip().replace('\n', '  \n')}")
+            else:
+                desc_text = full_desc.replace('\n', '  \n')
+                st.markdown(f"**💬 客戶問題描述：** \n{desc_text}")
+            # ======================================================================
+
             img_bytes_list = base64_to_imgs(selected_issue["截圖_Base64"])
             if img_bytes_list:
                 cols = st.columns(min(len(img_bytes_list), 3))
                 for i, img_bytes in enumerate(img_bytes_list):
-                    # 取消強制撐滿寬度，改用固定縮圖大小
                     cols[i % 3].image(img_bytes, caption=f"附件截圖 {i+1}", width=IMG_THUMB_WIDTH)
             else:
                 st.caption("*(此問題目前無附截圖)*")
@@ -247,134 +259,4 @@ with tab2:
 # --- Tab 3: Eirgenix QAV確認 ---
 with tab3:
     st.header("Eirgenix QAV 狀態確認")
-    df_review = df[df["狀態"] == "待覆核"]
-    if not df_review.empty:
-        review_id = st.selectbox("選擇要確認的項目", df_review["Issue_ID"].tolist())
-        row = df[df["Issue_ID"] == review_id].iloc[0]
-        
-        with st.container(border=True):
-            st.info(f"**處理人:** {row['處理人']} | **廠商最新回覆:** {row['廠商回覆']}")
-            vendor_img_bytes_list = base64_to_imgs(row.get("廠商截圖_Base64", ""))
-            if vendor_img_bytes_list:
-                cols = st.columns(min(len(vendor_img_bytes_list), 3))
-                for i, img_bytes in enumerate(vendor_img_bytes_list):
-                    # 取消強制撐滿寬度，改用固定縮圖大小
-                    cols[i % 3].image(img_bytes, caption=f"廠商回覆截圖 {i+1}", width=IMG_THUMB_WIDTH)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("✅ 確認結案"):
-                idx = df[df["Issue_ID"] == review_id].index[0]
-                df.at[idx, "狀態"] = "已結案"
-                df.at[idx, "最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-                save_data(df)
-                st.success(f"{review_id} 已順利結案！")
-                st.rerun()
-        with col2:
-            reason = st.text_input("無法結案原因 / 需補充說明", key=f"reason_{review_id}")
-            if st.button("🔄 需補充資訊 (退回討論)"):
-                idx = df[df["Issue_ID"] == review_id].index[0]
-                df.at[idx, "狀態"] = "退回重啟"
-                current_returns = int(df.at[idx, "退回次數"]) if str(df.at[idx, "退回次數"]).isdigit() else 0
-                df.at[idx, "退回次數"] = str(current_returns + 1)
-                df.at[idx, "最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-                if reason:
-                    df.at[idx, "問題描述"] = f"{df.at[idx, '問題描述']}\n\n[QAV 補充說明]: {reason}"
-                save_data(df)
-                st.warning(f"{review_id} 已退回給百昌補充資訊！")
-                st.rerun()
-    else:
-        st.success("目前沒有需要確認的項目！")
-
-# --- Tab 4: 歷史檔案庫 ---
-with tab4:
-    st.header("問題檢視與歷史紀錄")
-    search_id = st.selectbox("請選擇 Issue ID 查看詳情", df["Issue_ID"].tolist() if not df.empty else [])
-    if search_id:
-        row = df[df["Issue_ID"] == search_id].iloc[0]
-        display_returns = row['退回次數'] if str(row['退回次數']).isdigit() else "0"
-        st.write(f"**建立日期:** {row['建立日期']} | **處理人:** {row['處理人']} | **狀態:** {row['狀態']} | **重新討論次數:** {display_returns}")
-        if row['延續自ID']:
-            st.write(f"**🔗 延續自:** {row['延續自ID']}")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("### 📝 Eirgenix 提報")
-            st.write(f"**問題描述:**\n{row['問題描述']}")
-            qav_img_list = base64_to_imgs(row["截圖_Base64"])
-            if qav_img_list:
-                for i, img_bytes in enumerate(qav_img_list):
-                    # 取消強制撐滿寬度，改用固定縮圖大小
-                    st.image(img_bytes, caption=f"提報截圖 {i+1}", width=IMG_THUMB_WIDTH)
-        with col2:
-            st.markdown("### 🛠️ 百昌回覆")
-            reply_text = str(row['廠商回覆']).replace('\n', '  \n')
-            st.markdown(f"**處理說明:** \n{reply_text}")
-            vendor_img_list = base64_to_imgs(row.get("廠商截圖_Base64", ""))
-            if vendor_img_list:
-                for i, img_bytes in enumerate(vendor_img_list):
-                    # 取消強制撐滿寬度，改用固定縮圖大小
-                    st.image(img_bytes, caption=f"廠商修復截圖 {i+1}", width=IMG_THUMB_WIDTH)
-
-# --- Tab 5: 數據報表 ---
-with tab5:
-    st.header("📊 專案協作與案件複雜度分析")
-    st.caption("此報表協助評估專案進度、釐清系統模組狀況，並識別需要額外資源協助的複雜案件。")
-    
-    if not df.empty:
-        df_stats = df.copy()
-        df_stats['退回次數'] = pd.to_numeric(df_stats['退回次數'], errors='coerce').fillna(0)
-        df_stats['建立日期_dt'] = pd.to_datetime(df_stats['建立日期'], errors='coerce')
-        df_stats['最後更新_dt'] = pd.to_datetime(df_stats['最後更新'], errors='coerce')
-        df_stats['處理天數'] = (df_stats['最後更新_dt'] - df_stats['建立日期_dt']).dt.days.clip(lower=0)
-        
-        total_issues = len(df_stats)
-        closed_df = df_stats[df_stats['狀態'] == '已結案']
-        closed_issues = len(closed_df)
-        
-        closure_rate = (closed_issues / total_issues * 100) if total_issues > 0 else 0
-        total_returns = df_stats['退回次數'].sum()
-        avg_days = closed_df['處理天數'].mean() if not closed_df.empty else 0
-
-        st.subheader("🎯 專案協作成效指標")
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        with kpi1:
-            st.metric("累積發包議題", f"{total_issues} 件", help="雙方共同處理的總案件數")
-        with kpi2:
-            st.metric("重新討論次數", f"{int(total_returns)} 次", help="因案件較複雜，無法直接結案而需多次對焦的總次數")
-        with kpi3:
-            st.metric("平均結案週期", f"{avg_days:.1f} 天", help="從提報到雙方確認結案的平均耗時")
-        with kpi4:
-            st.metric("專案結案率", f"{closure_rate:.1f} %", f"已結案: {closed_issues}")
-
-        st.divider()
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("📊 各模組案件分佈")
-            st.caption("顯示各系統模組的問題數量，有助於辨識未來需重點優化的區域。")
-            module_counts = df_stats["模組"].value_counts()
-            st.bar_chart(module_counts)
-            
-        with col2:
-            st.subheader("🧩 複雜度較高的案件 (依廠商區分)")
-            st.caption("各處理人負責案件中，需要重新討論的總次數 (反映案件複雜度)。")
-            vendor_returns = df_stats.groupby("處理人")["退回次數"].sum()
-            vendor_returns = vendor_returns[vendor_returns > 0]
-            if not vendor_returns.empty:
-                st.bar_chart(vendor_returns)
-            else:
-                st.info("目前所有案件皆順利結案，無需重新討論！")
-
-        st.divider()
-        st.subheader("⏳ 處理週期較長案件 (需重點關注)")
-        st.caption("這些是處理週期較長、案情較為複雜的項目，建議與廠商進行會議對焦。")
-        if not closed_df.empty:
-            slowest_issues = closed_df.sort_values(by="處理天數", ascending=False).head(5)
-            display_slowest = slowest_issues[["Issue_ID", "模組", "處理人", "處理天數", "退回次數", "問題描述"]]
-            display_slowest = display_slowest.rename(columns={"退回次數": "重新討論次數"})
-            st.dataframe(display_slowest, use_container_width=True, hide_index=True)
-        else:
-            st.info("尚無已結案資料可計算週期。")
-    else:
-        st.info("尚無數據可供分析。")
+    df_review = df[df["
