@@ -47,14 +47,14 @@ df = load_data()
 
 # --- 側邊欄：統計、備份與還原 ---
 with st.sidebar:
-    st.title("📊 專案概況")
+    st.title("📊 TWD Eirgenix-百昌 問題集")
     st.metric("總立案數", len(df))
     st.metric("待處理項目", len(df[df["狀態"].isin(["已提報", "處理中", "退回重啟"])]))
     
     st.divider()
     
     # 使用 expander 把備份與還原功能收納起來，畫面更乾淨
-    with st.expander("⚙️ 系統備份與還原管理", expanded=False):
+    with st.expander("備份", expanded=False):
         st.caption("定期下載備份，以防雲端主機休眠資料遺失。")
         
         # 1. 下載備份功能
@@ -84,7 +84,7 @@ with st.sidebar:
 
 st.title(PAGE_TITLE)
 
-tab1, tab2, tab3, tab4 = st.tabs(["📋 任務看板 (廠商區)", "➕ 提報/延續問題", "🔍 Eirgenix QAV確認", "📂 歷史檔案庫"])
+tab1, tab2, tab3, tab4 = st.tabs(["📋 任務看板 (百昌)", "➕ 提報/延續問題 ", "🔍 Eirgenix QAV確認", "📂 歷史檔案庫"])
 
 # --- Tab 1: 任務看板 (廠商查看與回覆) ---
 with tab1:
@@ -94,7 +94,7 @@ with tab1:
         st.dataframe(df_active[["Issue_ID", "建立日期", "處理人", "優先級", "狀態", "問題描述"]], use_container_width=True)
         
         st.divider()
-        st.subheader("📝 廠商回覆與認領")
+        st.subheader("📝 百昌確認")
         col_up1, col_up2, col_up3 = st.columns([1, 1, 2])
         
         with col_up1:
@@ -125,11 +125,11 @@ with tab1:
             if st.button("🚀 處理完成"):
                 idx = df[df["Issue_ID"] == update_id].index[0]
                 df.at[idx, "處理人"] = new_assignee
-                df.at[idx, "廠商回覆"] = reply_text
+                df.at[idx, "百昌回覆"] = reply_text
                 df.at[idx, "狀態"] = "待覆核"
                 df.at[idx, "最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 save_data(df)
-                st.success(f"{update_id} 已送交 Eirgenix QAV 確認！")
+                st.success(f"{update_id} Done！")
                 st.rerun()
     else:
         st.info("目前沒有進行中的問題。")
@@ -139,9 +139,9 @@ with tab2:
     st.header("提報新問題或延續舊案")
     with st.form("new_issue_form", clear_on_submit=True):
         c1, c2, c3, c4 = st.columns(4)
-        with c1: module = st.selectbox("模組", ["Complaint", "Audit", "Supplier", "Others"])
+        with c1: module = st.selectbox("模組", ["TWD Overall", "QMS", "DMS", "TMS", "Other"])
         with c2: assignee = st.selectbox("指定處理人 (預設不指派)", VENDORS_LIST, index=0)
-        with c3: priority = st.selectbox("優先級", ["一般", "高", "緊急(影響GMP)"])
+        with c3: priority = st.selectbox("優先級", ["一個月內", "一周內", "急"])
         with c4: link_id = st.text_input("延續自 ID (例如 TWD-001)")
         
         desc = st.text_area("詳細問題描述 (請盡量清楚)")
@@ -176,7 +176,7 @@ with tab3:
         
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("✅ 確認解決 (結案)"):
+            if st.button("✅ 結案"):
                 idx = df[df["Issue_ID"] == review_id].index[0]
                 df.at[idx, "狀態"] = "已結案"
                 df.at[idx, "最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
