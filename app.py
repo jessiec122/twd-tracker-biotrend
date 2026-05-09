@@ -1,7 +1,7 @@
 # ==========================================
 # ⚙️ Configuration (系統參數與配置設定)
 # ==========================================
-PAGE_TITLE = "TWD 問題追蹤系統(🧪 測試區)"
+PAGE_TITLE = "TWD 問題追蹤系統(正式區)"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
@@ -90,12 +90,12 @@ def compress_and_upload_images(uploaded_files, folder="images"):
             
             # 4. 產生唯一檔名並上傳到 Supabase
             file_name = f"{folder}/{uuid.uuid4().hex}.jpg"
-            supabase.storage.from_("twd-images").upload(
+            supabase.storage.from_("twd-images-prod").upload(
                 file_name, file_bytes, {"content-type": "image/jpeg"}
             )
             
             # 5. 取得公開網址
-            public_url = supabase.storage.from_("twd-images").get_public_url(file_name)
+            public_url = supabase.storage.from_("twd-images-prod").get_public_url(file_name)
             urls.append(public_url)
         except Exception as e:
             st.error(f"圖片處理失敗: {e}")
