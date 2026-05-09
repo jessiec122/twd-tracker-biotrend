@@ -25,7 +25,7 @@ def init_db():
     if not os.path.exists(DATA_FILE):
         df = pd.DataFrame(columns=[
             "Issue_ID", "建立日期", "最後更新", "模組", "優先級", 
-            "處理人", "狀態", "問題描述", "截圖_Base64", "百昌回覆", "百昌截圖_Base64", "退回次數", "延續自ID"
+            "處理人", "狀態", "問題描述", "截圖_Base64", "百昌回覆", "百昌截圖_Base64", "重複次數", "延續自ID"
         ])
         df.to_csv(DATA_FILE, index=False)
 
@@ -87,7 +87,7 @@ def base64_to_imgs(base64_str, default_tag="歷史附件"):
 df = load_data()
 
 # 計算狀態數量 (用於頁籤與側邊欄)
-active_count = len(df[df["狀態"].isin(["已提報", "處理中", "退回重啟"])])
+active_count = len(df[df["狀態"].isin(["已提報", "處理中", "重複重啟"])])
 review_count = len(df[df["狀態"] == "待覆核"])
 total_count = len(df)
 
@@ -135,7 +135,7 @@ with st.sidebar:
                 
             st.divider()
             if st.button("🧨 確定清空全庫資料 (歸零)", type="primary", use_container_width=True):
-                empty_df = pd.DataFrame(columns=["Issue_ID", "建立日期", "最後更新", "模組", "優先級", "處理人", "狀態", "問題描述", "截圖_Base64", "百昌回覆", "百昌截圖_Base64", "退回次數", "延續自ID"])
+                empty_df = pd.DataFrame(columns=["Issue_ID", "建立日期", "最後更新", "模組", "優先級", "處理人", "狀態", "問題描述", "截圖_Base64", "百昌回覆", "百昌截圖_Base64", "重複次數", "延續自ID"])
                 save_data(empty_df); st.rerun()
         elif admin_pwd_input:
             st.error("❌ 密碼錯誤")
@@ -219,7 +219,7 @@ with tab2:
                     new_id = f"TWD-{last_id + 1:03d}"
                 else: new_id = "TWD-001"
                     
-                new_row = {"Issue_ID": new_id, "建立日期": datetime.now().strftime("%Y-%m-%d"), "最後更新": datetime.now().strftime("%Y-%m-%d"), "模組": module, "優先級": priority, "處理人": assignee, "狀態": "已提報", "問題描述": desc.strip(), "截圖_Base64": imgs_to_base64(imgs, "初始提報"), "百昌回覆": "", "百昌截圖_Base64": "", "退回次數": "0", "延續自ID": link_id}
+                new_row = {"Issue_ID": new_id, "建立日期": datetime.now().strftime("%Y-%m-%d"), "最後更新": datetime.now().strftime("%Y-%m-%d"), "模組": module, "優先級": priority, "處理人": assignee, "狀態": "已提報", "問題描述": desc.strip(), "截圖_Base64": imgs_to_base64(imgs, "初始提報"), "百昌回覆": "", "百昌截圖_Base64": "", "重複次數": "0", "延續自ID": link_id}
                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
                 save_data(df); st.rerun()
 
@@ -254,8 +254,8 @@ with tab3:
                 else:
                     df = load_data()
                     idx = df[df["Issue_ID"] == rid].index[0]
-                    rt = int(df.at[idx, "退回次數"]) if str(df.at[idx, "退回次數"]).isdigit() else 0
-                    df.at[idx, "狀態"], df.at[idx, "退回次數"], df.at[idx, "最後更新"] = "退回重啟", str(rt + 1), datetime.now().strftime("%Y-%m-%d %H:%M")
+                    rt = int(df.at[idx, "重複次數"]) if str(df.at[idx, "重複次數"]).isdigit() else 0
+                    df.at[idx, "狀態"], df.at[idx, "重複次數"], df.at[idx, "最後更新"] = "重複重啟", str(rt + 1), datetime.now().strftime("%Y-%m-%d %H:%M")
                     
                     new_append = f"\n\n---\n📌 **[第 {rt+1} 次補充說明]** ({datetime.now().strftime('%m-%d %H:%M')}):\n{reason.strip()}"
                     df.at[idx, "問題描述"] = str(df.at[idx, '問題描述']) + new_append
@@ -287,7 +287,7 @@ with tab4:
     
     if search_id:
         r = df[df["Issue_ID"] == search_id].iloc[0]
-        st.write(f"**狀態:** {r['狀態']} | **重新討論:** {r['退回次數']} 次 | **建立日期:** {r['建立日期']}")
+        st.write(f"**狀態:** {r['狀態']} | **重新討論:** {r['重複次數']} 次 | **建立日期:** {r['建立日期']}")
         if pd.notna(r['延續自ID']) and r['延續自ID'] != "": st.write(f"🔗 **延續自:** {r['延續自ID']}")
         
         is_purged_qav = str(r["截圖_Base64"]).strip() == "[圖片已封存至本地端]"
@@ -321,10 +321,10 @@ with tab5:
             st.bar_chart(df["模組"].value_counts())
         with c2:
             st.markdown("**⚠️ 複雜案件 (依討論次數排名)**")
-            df['退回次數_數值'] = pd.to_numeric(df['退回次數'], errors='coerce').fillna(0)
-            df_rework = df[df['退回次數_數值'] > 0].sort_values(by='退回次數_數值', ascending=False).head(5)
+            df['重複次數_數值'] = pd.to_numeric(df['重複次數'], errors='coerce').fillna(0)
+            df_rework = df[df['重複次數_數值'] > 0].sort_values(by='重複次數_數值', ascending=False).head(5)
             if not df_rework.empty:
-                st.dataframe(df_rework[["Issue_ID", "處理人", "退回次數_數值", "狀態"]], use_container_width=True, hide_index=True)
+                st.dataframe(df_rework[["Issue_ID", "處理人", "重複次數_數值", "狀態"]], use_container_width=True, hide_index=True)
             else:
                 st.success("目前沒有需要討論的複雜案件！")
     else: st.info("無數據可供分析。")
