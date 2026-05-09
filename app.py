@@ -2,22 +2,22 @@
 # ⚙️ Configuration (系統參數與配置設定)
 # ==========================================
 DATA_FILE = "twd_data.csv"
-PAGE_TITLE = "TWD 供應商問題追蹤系統 (企業架構版)"
+PAGE_TITLE = "TWD 供應商問題追蹤系統 (企業架構版 v4.1)"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
 IMG_THUMB_WIDTH = 300
 
-# --- 狀態字典常數 (未來若需修改流程狀態，只需改這裡) ---
+# --- 狀態字典常數 ---
 STATUS_REPORTED = "已提報"
 STATUS_IN_PROGRESS = "處理中"
 STATUS_REVIEW = "待覆核"
 STATUS_CLOSED = "已結案"
 STATUS_REOPENED = "重複重啟"
 
-# --- 資料表欄位結構 (統一管理，避免新增/清空時欄位對不上) ---
+# --- 資料表欄位結構 (新增 Due_Date) ---
 DB_COLUMNS = [
-    "Issue_ID", "建立日期", "最後更新", "模組", "優先級", 
+    "Issue_ID", "建立日期", "最後更新", "Due_Date", "模組", "優先級", 
     "處理人", "狀態", "問題描述", "截圖_Base64", "百昌回覆", 
     "百昌截圖_Base64", "重複次數", "延續自ID", "最終解決方案"
 ]
@@ -30,7 +30,7 @@ import pandas as pd
 import os
 import base64
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 st.set_page_config(page_title=PAGE_TITLE, layout="wide")
 
@@ -38,14 +38,15 @@ def init_db():
     """初始化資料庫檔案"""
     if not os.path.exists(DATA_FILE):
         df = pd.DataFrame(columns=DB_COLUMNS)
-        df.to_csv(DATA_FILE, index=False)
+        # 🟢 新增 utf-8-sig，避免 Excel 開啟時中文亂碼
+        df.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
 
 init_db()
 
 def load_data() -> pd.DataFrame:
     """載入資料並進行無縫升級防呆檢核"""
     df = pd.read_csv(DATA_FILE, dtype=str).fillna("")
-    # 確保所有必須欄位都存在 (未來若在 DB_COLUMNS 新增欄位，舊資料也不會報錯)
+    # 確保所有必須欄位都存在
     for col in DB_COLUMNS:
         if col not in df.columns:
             df[col] = ""
@@ -75,15 +76,16 @@ def push_to_github(filepath: str):
     requests.put(url, headers=headers, json=data)
 
 def save_data(df: pd.DataFrame):
-    """安全儲存機制：先存入本地暫存，再觸發 GitHub 雲端備份"""
-    df.to_csv(DATA_FILE, index=False)
+    """安全儲存機制"""
+    # 🟢 新增 utf-8-sig，確保每次存檔 Excel 讀取正常
+    df.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
     try:
         push_to_github(DATA_FILE)
     except Exception as e:
         st.sidebar.error(f"⚠️ GitHub 同步失敗，但資料已暫存: {e}")
 
 # ==========================================
-# 🖼️ Image Handling Helpers (影像處理輔助)
+# 🖼️ Helpers & SLA Logic (影像處理與紅綠燈邏輯)
 # ==========================================
 def imgs_to_base64(uploaded_files, tag=""):
     if not uploaded_files: return ""
@@ -105,20 +107,32 @@ def base64_to_imgs(base64_str, default_tag="歷史附件"):
         except: pass
     return result
 
-# ==========================================
-# 🎨 UI Component Helpers (共用介面模組 - 減少重複程式碼)
-# ==========================================
+def get_due_date_status(due_date_str):
+    """SLA 動態紅綠燈計算器"""
+    if pd.isna(due_date_str) or str(due_date_str).strip() == "":
+        return "⚪ 未設定"
+    try:
+        due_date = datetime.strptime(str(due_date_str), "%Y-%m-%d").date()
+        today = datetime.now().date()
+        days_left = (due_date - today).days
+        
+        if days_left < 0:
+            return f"🔴 逾期 (延遲 {abs(days_left)} 天)"
+        elif days_left <= 2:
+            return f"🟡 緊迫 (剩 {days_left} 天)"
+        else:
+            return f"🟢 正常 (剩 {days_left} 天)"
+    except:
+        return "⚪ 格式錯誤"
+
 def render_image_gallery(base64_str, default_caption="圖片"):
-    """共用的圖片渲染模組"""
     if str(base64_str).strip() == "[圖片已封存至本地端]":
         st.info("ℹ️ 此案件的線上圖片已清洗封存，若需檢視原圖請查閱本地 HTML 報表。")
         return
-    
     for tag, img in base64_to_imgs(base64_str, default_caption):
         st.image(img, caption=tag, width=IMG_THUMB_WIDTH)
 
 def render_history_comparison(row):
-    """渲染 QAV 與 廠商 雙向歷史對話的並排視窗"""
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("### 📝 台康 QAV 紀錄")
@@ -157,7 +171,6 @@ with st.sidebar:
         st.divider()
         st.markdown("### 🔐 管理員專區")
         admin_pwd_input = st.text_input("輸入密碼解鎖進階功能", type="password")
-        
         admin_unlocked = ("ADMIN_PWD" in st.secrets) and (admin_pwd_input == st.secrets["ADMIN_PWD"])
         
         if admin_unlocked:
@@ -198,15 +211,18 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 
 # --- Tab 1: 百昌待處理清單 ---
 with tab1:
-    df_active = df[df["狀態"].isin([STATUS_REPORTED, STATUS_IN_PROGRESS, STATUS_REOPENED])]
+    df_active = df[df["狀態"].isin([STATUS_REPORTED, STATUS_IN_PROGRESS, STATUS_REOPENED])].copy()
     if not df_active.empty:
-        st.dataframe(df_active[["Issue_ID", "建立日期", "優先級", "處理人", "問題描述", "模組", "狀態"]], use_container_width=True, height=250, hide_index=True)
+        # 動態計算並顯示紅綠燈健康度
+        df_active["健康度"] = df_active["Due_Date"].apply(get_due_date_status)
+        st.dataframe(df_active[["Issue_ID", "健康度", "Due_Date", "處理人", "模組", "狀態"]], use_container_width=True, height=250, hide_index=True)
         st.divider()
         
         update_id = st.selectbox("選擇處理編號", options=df_active["Issue_ID"].tolist(), index=None, placeholder="請選擇要更新的 Issue ID...")
         if update_id:
             row = df[df["Issue_ID"] == update_id].iloc[0]
             with st.container(border=True):
+                st.info(f"**健康度:** {get_due_date_status(row.get('Due_Date', ''))} | **優先級:** {row['優先級']}")
                 st.markdown(f"**💬 台康問題：**\n\n{str(row['問題描述']).replace('\n', '  \n')}")
                 render_image_gallery(row.get("截圖_Base64", ""), "台康提報/補充")
 
@@ -225,10 +241,9 @@ with tab1:
                 btn_submit = c2.form_submit_button("🚀 處理完成 (送交 台康 確認)", type="primary", use_container_width=True)
 
             if btn_save or btn_submit:
-                df = load_data() # 寫入前防覆蓋重讀
+                df = load_data() 
                 idx = df[df["Issue_ID"] == update_id].index[0]
                 
-                # 判斷狀態流轉邏輯
                 if btn_submit:
                     new_status = STATUS_REVIEW
                 else:
@@ -271,6 +286,15 @@ with tab2:
             else:
                 df = load_data() 
                 
+                # 自動推算 Due Date
+                today = datetime.now()
+                if priority == "急":
+                    due_date = (today + timedelta(days=3)).strftime("%Y-%m-%d")
+                elif priority == "一周內":
+                    due_date = (today + timedelta(days=7)).strftime("%Y-%m-%d")
+                else:
+                    due_date = (today + timedelta(days=30)).strftime("%Y-%m-%d")
+
                 if not df.empty:
                     extracted_ids = df["Issue_ID"].str.extract(r'(\d+)')[0].dropna()
                     last_id = extracted_ids.astype(int).max() if not extracted_ids.empty else len(df)
@@ -280,8 +304,9 @@ with tab2:
                     
                 new_row = {
                     "Issue_ID": new_id, 
-                    "建立日期": datetime.now().strftime("%Y-%m-%d"), 
-                    "最後更新": datetime.now().strftime("%Y-%m-%d"), 
+                    "建立日期": today.strftime("%Y-%m-%d"), 
+                    "最後更新": today.strftime("%Y-%m-%d"), 
+                    "Due_Date": due_date,
                     "模組": module, 
                     "優先級": priority, 
                     "處理人": assignee, 
@@ -307,14 +332,14 @@ with tab3:
         if review_id:
             row = df[df["Issue_ID"] == review_id].iloc[0]
             with st.container(border=True):
-                st.info(f"**當前處理人:** {row['處理人']}")
-                # 🚀 這裡直接呼叫共用模組，完美並排顯示「原始問題」與「廠商回覆」
+                # 顯示目前的 Target Date 讓 QAV 知道廠商是不是壓線交卷
+                st.info(f"**當前處理人:** {row['處理人']} | **預計完成日 (Due Date):** {row.get('Due_Date', '未設定')}")
                 render_history_comparison(row)
             
             with st.form(key=f"qav_form_{review_id}", clear_on_submit=True):
                 st.markdown("### 審核作業區")
                 conclusion = st.text_area("最終解決方案 / 結論總結 ⭐ (若同意結案則必填)", height=80, placeholder="請簡述廠商的最終解決方案，這將成為未來知識庫的重要資產。")
-                reason = st.text_area("重新討論原因 ⭐ (若需重新討論則必填)", height=80, placeholder="若問題未解決，請詳細說明退回原因。")
+                reason = st.text_area("重新討論原因 ⭐ (若需重新討論則必填)", height=80, placeholder="若問題未解決，請詳細說明退回原因。(系統將自動給予廠商 2 天寬限期)")
                 q_imgs = st.file_uploader("補充截圖給百昌", type=["png", "jpg"], accept_multiple_files=True)
                 
                 st.divider()
@@ -340,9 +365,20 @@ with tab3:
                     df = load_data()
                     idx = df[df["Issue_ID"] == review_id].index[0]
                     rt = int(df.at[idx, "重複次數"]) if str(df.at[idx, "重複次數"]).isdigit() else 0
+                    
+                    # --- 核心：退回寬容展延機制 (+2天) ---
+                    current_due_str = df.at[idx, "Due_Date"]
+                    try:
+                        current_due = datetime.strptime(str(current_due_str), "%Y-%m-%d")
+                        new_due = (current_due + timedelta(days=2)).strftime("%Y-%m-%d")
+                    except:
+                        # 若為舊資料無 Due Date，則從今天起算加 2 天
+                        new_due = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+                    
                     df.at[idx, "狀態"] = STATUS_REOPENED
                     df.at[idx, "重複次數"] = str(rt + 1)
                     df.at[idx, "最後更新"] = datetime.now().strftime("%Y-%m-%d")
+                    df.at[idx, "Due_Date"] = new_due  # 更新死線
                     
                     new_append = f"\n\n---\n📌 **[第 {rt+1} 次補充說明]** ({datetime.now().strftime('%Y-%m-%d')}):\n{reason.strip()}"
                     df.at[idx, "問題描述"] = str(df.at[idx, '問題描述']) + new_append
@@ -373,15 +409,13 @@ with tab4:
     
     if search_id:
         r = df[df["Issue_ID"] == search_id].iloc[0]
-        st.write(f"**狀態:** {r['狀態']} | **重新討論:** {r['重複次數']} 次 | **建立日期:** {r['建立日期']}")
+        st.write(f"**狀態:** {r['狀態']} | **重新討論:** {r['重複次數']} 次 | **建立日期:** {r['建立日期']} | **預計完成日:** {r.get('Due_Date', '未設定')}")
         if pd.notna(r.get('延續自ID')) and r['延續自ID'] != "": 
             st.write(f"🔗 **延續自:** {r['延續自ID']}")
         
-        # 顯眼展示最終解決方案
         if pd.notna(r.get('最終解決方案')) and str(r['最終解決方案']).strip() != "":
             st.success(f"🏆 **最終解決方案:**\n\n{r['最終解決方案']}")
             
-        # 呼叫共用模組，一鍵畫出雙邊圖文對話紀錄
         render_history_comparison(r)
 
 # --- Tab 5: 數據報表 ---
