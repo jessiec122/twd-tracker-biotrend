@@ -289,7 +289,7 @@ with tab2:
                 # 自動推算 Due Date
                 today = datetime.now()
                 if priority == "急":
-                    due_date = (today + timedelta(days=3)).strftime("%Y-%m-%d")
+                    due_date = (today + timedelta(days=1)).strftime("%Y-%m-%d")
                 elif priority == "一周內":
                     due_date = (today + timedelta(days=7)).strftime("%Y-%m-%d")
                 else:
