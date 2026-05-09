@@ -143,14 +143,14 @@ with st.sidebar:
 st.title(PAGE_TITLE)
 # 動態頁籤數量
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    f"📋 任務看板 ({active_count})", 
+    f"📋 百昌待處理清單 ({active_count})", 
     "➕ 提報問題", 
     f"🔍 Eirgenix QAV確認 ({review_count})", 
     f"📂 歷史檔案庫 ({total_count})", 
     "📈 QAV 管理報表"
 ])
 
-# --- Tab 1: 任務看板 (百昌回覆) ---
+# --- Tab 1: 百昌待處理清單 (百昌回覆) ---
 with tab1:
     df_active = df[df["狀態"].isin(["已提報", "處理中", "仍須討論"])]
     if not df_active.empty:
