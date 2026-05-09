@@ -218,7 +218,7 @@ with tab1:
         st.dataframe(df_active[["Issue_ID", "健康度", "Due_Date", "處理人", "模組", "狀態"]], use_container_width=True, height=250, hide_index=True)
         st.divider()
         
-        update_id = st.selectbox("選擇處理編號", options=df_active["Issue_ID"].tolist(), index=None, placeholder="請選擇要更新的 Issue ID...")
+        update_id = st.selectbox("選擇處理編號", options=df_active["Issue_ID"].tolist(), index=None, placeholder="請選擇要處理的 Issue ID...")
         if update_id:
             row = df[df["Issue_ID"] == update_id].iloc[0]
             with st.container(border=True):
