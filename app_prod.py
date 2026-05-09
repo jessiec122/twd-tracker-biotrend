@@ -150,10 +150,21 @@ with st.sidebar:
     st.metric("待 Eirgenix QAV 確認", review_count)
     
     st.divider()
-    with st.expander("⚙️ 系統備份", expanded=False):
-        if not df.empty:
-            csv_data = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 下載全庫備份 (CSV)", data=csv_data, file_name=f"TWD_Backup_{datetime.now().strftime('%Y%m%d')}.csv", use_container_width=True)
+    st.markdown("### 📊 報表下載")
+    
+    if not df.empty:
+        # 使用 utf-8-sig 確保 Excel 打開不會亂碼
+        csv_data = df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 下載案件總表 (CSV)", 
+            data=csv_data, 
+            file_name=f"TWD_案件追蹤總表_{datetime.now().strftime('%Y%m%d')}.csv", 
+            mime="text/csv",
+            use_container_width=True
+        )
+    else:
+        st.info("目前尚無資料可供下載")
+
 
 st.title(PAGE_TITLE)
 
