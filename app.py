@@ -157,8 +157,13 @@ with st.sidebar:
 
 st.title(PAGE_TITLE)
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    f"📋 百昌待處理清單 ({active_count})", "➕ 提報問題", f"🔍 QAV確認 ({review_count})", f"📂 歷史檔案庫 ({total_count})", "📈 管理報表"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    f"📋 百昌待處理 ({active_count})", 
+    "➕ 提報問題", 
+    f"🔍 QAV確認 ({review_count})", 
+    "📂 歷史檔案庫", 
+    f"📊 案件總表({total_count})",   # <-- 這是給主管的新頁籤
+    "📈 管理報表" 
 ])
 
 # --- Tab 1: 百昌待處理清單 ---
@@ -285,12 +290,12 @@ with tab3:
                         save_issue(row); st.rerun()
     else: st.success("目前沒有需要確認的項目！")
 
-# --- Tab 4: 歷史檔案庫 ---
+# --- Tab 4: 歷史檔案庫 (維持原樣：深度搜尋與圖文對話) ---
 with tab4:
-    search_term = st.text_input("🔍 輸入關鍵字搜尋")
+    search_term = st.text_input("🔍 輸入關鍵字搜尋 (ID, 內容, 廠商回覆等)")
     df_display = df[df.astype(str).apply(lambda col: col.str.contains(search_term, case=False, na=False)).any(axis=1)] if search_term else df
     
-    search_id = st.selectbox("選擇查看", df_display["Issue_ID"].tolist() if not df_display.empty else [], index=None)
+    search_id = st.selectbox("選擇查看詳細紀錄", df_display["Issue_ID"].tolist() if not df_display.empty else [], index=None)
     if search_id:
         r = df[df["Issue_ID"] == search_id].iloc[0]
         st.write(f"**狀態:** {r['狀態']} | **重新討論:** {r['重複次數']} 次 | **預計完成日:** {r.get('Due_Date', '未設定')}")
@@ -298,8 +303,47 @@ with tab4:
             st.success(f"🏆 **最終解決方案:**\n\n{r['最終解決方案']}")
         render_history_comparison(r)
 
-# --- Tab 5: 數據報表 ---
+# --- Tab 5: 案件總表 (全新：主管專屬的 Excel 視角) ---
 with tab5:
+    st.info("💡 此頁面專供快速瀏覽所有案件進度。若需查看完整圖片與對話，請至「📂 歷史檔案庫」。")
+    
+    # 頂部搜尋與篩選列 (特別加上 key 避免與 Tab 4 的元件衝突)
+    c1, c2, c3 = st.columns([2, 1, 1])
+    search_tab5 = c1.text_input("🔍 快速搜尋 (支援 ID、描述、解答)", key="search_tab5")
+    filter_module = c2.selectbox("按模組篩選", ["全部"] + MODULE_OPTIONS, key="mod_tab5")
+    filter_status = c3.selectbox("按狀態篩選", ["全部", STATUS_REPORTED, STATUS_IN_PROGRESS, STATUS_REVIEW, STATUS_CLOSED, STATUS_REOPENED], key="stat_tab5")
+    
+    # 執行過濾邏輯
+    df_summary = df.copy()
+    if search_tab5:
+        df_summary = df_summary[df_summary.astype(str).apply(lambda col: col.str.contains(search_tab5, case=False, na=False)).any(axis=1)]
+    if filter_module != "全部":
+        df_summary = df_summary[df_summary["模組"] == filter_module]
+    if filter_status != "全部":
+        df_summary = df_summary[df_summary["狀態"] == filter_status]
+
+    # 只挑選主管最在意的欄位
+    view_cols = ["Issue_ID", "模組", "狀態", "處理人", "Due_Date", "問題描述", "最終解決方案"]
+    
+    # 顯示高質感資料表
+    st.dataframe(
+        df_summary[view_cols],
+        use_container_width=True,
+        hide_index=True,
+        height=500,
+        column_config={
+            "Issue_ID": st.column_config.TextColumn("編號", width="small"),
+            "模組": st.column_config.TextColumn("模組", width="small"),
+            "狀態": st.column_config.TextColumn("狀態", width="small"),
+            "處理人": st.column_config.TextColumn("處理人", width="small"),
+            "Due_Date": st.column_config.TextColumn("期限", width="small"),
+            "問題描述": st.column_config.TextColumn("問題描述", width="large"),
+            "最終解決方案": st.column_config.TextColumn("最終解答", width="large")
+        }
+    )
+
+# --- Tab 6: 數據報表 (原 Tab 5) ---
+with tab6:
     if not df.empty:
         k1, k2, k3 = st.columns(3)
         k1.metric("總數", len(df))
