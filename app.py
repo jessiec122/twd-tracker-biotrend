@@ -307,8 +307,9 @@ with tab3:
         if review_id:
             row = df[df["Issue_ID"] == review_id].iloc[0]
             with st.container(border=True):
-                st.info(f"**處理人:** {row['處理人']} | **最新與歷史紀錄：**\n\n{str(row['百昌回覆']).replace('\n', '  \n')}")
-                render_image_gallery(row.get("百昌截圖_Base64", ""), "百昌修復截圖")
+                st.info(f"**當前處理人:** {row['處理人']}")
+                # 🚀 這裡直接呼叫共用模組，完美並排顯示「原始問題」與「廠商回覆」
+                render_history_comparison(row)
             
             with st.form(key=f"qav_form_{review_id}", clear_on_submit=True):
                 st.markdown("### 審核作業區")
