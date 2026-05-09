@@ -2,7 +2,7 @@
 # ⚙️ Configuration (系統參數與配置設定)
 # ==========================================
 DATA_FILE = "twd_data.csv"
-PAGE_TITLE = "TWD 供應商問題追蹤系統 (企業架構版 v4.1)"
+PAGE_TITLE = "TWD 供應商問題追蹤系統"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
