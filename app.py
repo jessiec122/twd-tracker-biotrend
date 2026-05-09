@@ -119,9 +119,9 @@ def get_due_date_status(due_date_str):
         if days_left < 0:
             return f"🔴 逾期 (延遲 {abs(days_left)} 天)"
         elif days_left <= 2:
-            return f"🟡 緊迫 (剩 {days_left} 天)"
+            return f"🟡 剩 {days_left} 天"
         else:
-            return f"🟢 正常 (剩 {days_left} 天)"
+            return f"🟢 剩 {days_left} 天"
     except:
         return "⚪ 格式錯誤"
 
