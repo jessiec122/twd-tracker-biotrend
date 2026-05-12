@@ -251,7 +251,7 @@ with tab2:
                 else: new_id = "TWD-001"
                     
                 new_row = {
-                    "Issue_ID": new_id, "建立日期": today.strftime("%Y-%m-%d"), "最後更新": today.strftime("%Y-%m-%d"),
+                    "Issue_ID": new_id, "建立日期": today.strftime("%Y-%m-%d"), "最後更新": today.strftime("%Y-%m-%d  %H:%M"),
                     "Due_Date": due_date, "模組": module, "優先級": priority, "處理人": assignee,
                     "狀態": STATUS_REPORTED, "問題描述": desc.strip(), 
                     "截圖_Base64": compress_and_upload_images(imgs, "qav"),
@@ -281,7 +281,7 @@ with tab3:
                     if not conclusion.strip(): st.error("請填寫最終解決方案！")
                     else:
                         row["狀態"] = STATUS_CLOSED
-                        row["最後更新"] = datetime.now().strftime("%Y-%m-%d")
+                        row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                         row["最終解決方案"] = conclusion.strip()
                         save_issue(row); st.rerun()
 
@@ -291,10 +291,10 @@ with tab3:
                         rt = int(row["重複次數"]) if str(row["重複次數"]).isdigit() else 0
                         row["狀態"] = STATUS_REOPENED
                         row["重複次數"] = str(rt + 1)
-                        row["最後更新"] = datetime.now().strftime("%Y-%m-%d")
+                        row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                         row["Due_Date"] = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d") # 展延2天
                         
-                        row["問題描述"] = str(row['問題描述']) + f"\n\n---\n📌 **[第 {rt+1} 次補充]** ({datetime.now().strftime('%Y-%m-%d')}):\n{reason.strip()}"
+                        row["問題描述"] = str(row['問題描述']) + f"\n\n---\n📌 **[第 {rt+1} 次補充]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{reason.strip()}"
                         if q_imgs:
                             new_urls = compress_and_upload_images(q_imgs, "qav_return")
                             row["截圖_Base64"] = str(row["截圖_Base64"]) + "||" + new_urls if str(row["截圖_Base64"]) else new_urls
