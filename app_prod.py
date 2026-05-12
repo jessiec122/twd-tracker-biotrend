@@ -211,11 +211,11 @@ with tab1:
                 elif row["狀態"] == STATUS_REPORTED: row["狀態"] = STATUS_IN_PROGRESS
                 
                 row["處理人"] = new_assignee
-                row["最後更新"] = datetime.now().strftime("%Y-%m-%d")
+                row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 
                 if reply_text.strip() or v_imgs:
                     count = str(row['百昌回覆']).count("💬 **[第") + 1
-                    new_msg = f"💬 **[第 {count} 次回覆]** ({datetime.now().strftime('%Y-%m-%d')}):\n{reply_text.strip() or '(僅更新截圖)'}"
+                    new_msg = f"💬 **[第 {count} 次回覆]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{reply_text.strip() or '(僅更新截圖)'}"
                     row["百昌回覆"] = str(row["百昌回覆"]) + "\n\n---\n" + new_msg if str(row["百昌回覆"]) else new_msg
                     
                     if v_imgs:
