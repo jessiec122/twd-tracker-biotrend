@@ -1,7 +1,7 @@
 # ==========================================
 # ⚙️ Configuration (系統參數與配置設定)
 # ==========================================
-PAGE_TITLE = "TWD 問題追蹤系統"
+PAGE_TITLE = "TWD 問題追蹤系統(正式區)"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
@@ -39,6 +39,10 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
+# 取得資料庫與儲存空間名稱 (可透過 Streamlit Secrets 動態配置，預設為正式區)
+DB_TABLE = st.secrets.get("DB_TABLE", "issues_prod")
+STORAGE_BUCKET = st.secrets.get("STORAGE_BUCKET", "twd-images-prod")
+
 # 欄位中英對照表 (確保前端介面不變，後端存英文)
 DB_MAP = {
     "issue_id": "Issue_ID", "created_date": "建立日期", "updated_date": "最後更新",
@@ -52,7 +56,7 @@ REVERSE_MAP = {v: k for k, v in DB_MAP.items()}
 
 def load_data() -> pd.DataFrame:
     """從 Supabase 讀取資料"""
-    response = supabase.table("issues_prod").select("*").execute()
+    response = supabase.table(DB_TABLE).select("*").execute()
     if not response.data:
         return pd.DataFrame(columns=list(DB_MAP.values()))
     
@@ -65,7 +69,7 @@ def load_data() -> pd.DataFrame:
 def save_issue(row_dict):
     """將單筆更新或新增寫入 Supabase"""
     db_data = {REVERSE_MAP[k]: str(v) for k, v in row_dict.items() if k in REVERSE_MAP}
-    supabase.table("issues_prod").upsert(db_data).execute()
+    supabase.table(DB_TABLE).upsert(db_data).execute()
 
 # ==========================================
 # 🔔 Notification Helpers (Teams 通知功能)
@@ -123,12 +127,12 @@ def compress_and_upload_images(uploaded_files, folder="images"):
             
             # 4. 產生唯一檔名並上傳到 Supabase
             file_name = f"{folder}/{uuid.uuid4().hex}.jpg"
-            supabase.storage.from_("twd-images-prod").upload(
+            supabase.storage.from_(STORAGE_BUCKET).upload(
                 file_name, file_bytes, {"content-type": "image/jpeg"}
             )
             
             # 5. 取得公開網址
-            public_url = supabase.storage.from_("twd-images-prod").get_public_url(file_name)
+            public_url = supabase.storage.from_(STORAGE_BUCKET).get_public_url(file_name)
             urls.append(public_url)
         except Exception as e:
             st.error(f"圖片處理失敗: {e}")
