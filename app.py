@@ -77,17 +77,41 @@ def save_issue(row_dict):
 def send_teams_qav_notification(title: str, text: str):
     """
     將通知發送到 Microsoft Teams (專門通知 QAV 覆核)
-    支援新版 Power Automate 工作流程與舊版 Webhook 格式
+    支援新版 Power Automate 工作流程的自適應卡片 (Adaptive Card) 格式
     """
     webhook_url = st.secrets.get("TEAMS_QAV_WEBHOOK", "")
     if not webhook_url:
         print("💡 [Debug] TEAMS_QAV_WEBHOOK 未在 Secrets 中設定，跳過發送通知。")
         return False
         
-    print(f"💡 [Debug] 偵測到 Webhook 網址，正在發送 Teams 通知...")
+    print(f"💡 [Debug] 偵測到 Webhook 網址，正在以 Adaptive Card 格式發送 Teams 通知...")
+    
+    # 封裝成微軟標準自適應卡片 (Adaptive Card) 規格
     payload = {
-        "title": title,
-        "text": text
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "body": [
+                        {
+                            "type": "TextBlock",
+                            "size": "Medium",
+                            "weight": "Bolder",
+                            "text": title
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": text,
+                            "wrap": True
+                        }
+                    ],
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.2"
+                }
+            }
+        ]
     }
     
     try:
@@ -100,7 +124,6 @@ def send_teams_qav_notification(title: str, text: str):
         print(f"💡 [Debug] Teams 發送回應狀態碼: {response.status_code}")
         return response.status_code in (200, 201, 202)
     except Exception as e:
-        # 於 Streamlit 後台印出錯誤，但不中斷前端操作
         print(f"❌ [Debug] Teams 通知發送失敗: {e}")
         return False
 
