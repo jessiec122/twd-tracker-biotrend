@@ -21,6 +21,9 @@ import pandas as pd
 import os
 import io
 import uuid
+import time
+import requests
+import json
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from PIL import Image # 用於影像壓縮
@@ -65,6 +68,62 @@ def save_issue(row_dict):
     supabase.table("issues_prod").upsert(db_data).execute()
 
 # ==========================================
+# 🔔 Notification Helpers (Teams 通知功能)
+# ==========================================
+def send_teams_qav_notification(title: str, text: str):
+    """
+    將通知發送到 Microsoft Teams (專門通知 QAV 覆核)
+    支援新版 Power Automate 工作流程的自適應卡片 (Adaptive Card) 格式
+    """
+    webhook_url = st.secrets.get("TEAMS_QAV_WEBHOOK", "")
+    if not webhook_url:
+        print("💡 [Debug] TEAMS_QAV_WEBHOOK 未在 Secrets 中設定，跳過發送通知。")
+        return False
+        
+    print(f"💡 [Debug] 偵測到 Webhook 網址，正在以 Adaptive Card 格式發送 Teams 通知...")
+    
+    # 封裝成微軟標準自適應卡片 (Adaptive Card) 規格
+    payload = {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "body": [
+                        {
+                            "type": "TextBlock",
+                            "size": "Medium",
+                            "weight": "Bolder",
+                            "text": title
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": text,
+                            "wrap": True
+                        }
+                    ],
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.2"
+                }
+            }
+        ]
+    }
+    
+    try:
+        response = requests.post(
+            webhook_url,
+            data=json.dumps(payload),
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        print(f"💡 [Debug] Teams 發送回應狀態碼: {response.status_code}")
+        return response.status_code in (200, 201, 202)
+    except Exception as e:
+        print(f"❌ [Debug] Teams 通知發送失敗: {e}")
+        return False
+
+# ==========================================
 # 🖼️ Helpers: 圖片壓縮與雲端圖庫上傳
 # ==========================================
 def compress_and_upload_images(uploaded_files, folder="images"):
@@ -99,6 +158,7 @@ def compress_and_upload_images(uploaded_files, folder="images"):
             urls.append(public_url)
         except Exception as e:
             st.error(f"圖片處理失敗: {e}")
+            st.stop() # 停止程式執行，防止 st.rerun() 瞬間刷掉錯誤訊息
             
     return "||".join(urls)
 
@@ -173,7 +233,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "➕ 提報問題", 
     f"🔍 QAV確認 ({review_count})", 
     "📂 歷史檔案庫", 
-    f"📊 案件總表({total_count})",   # <-- 這是給主管的新頁籤
+    f"📊 案件總表({total_count})",   # <-- 這是主管的新頁籤
     "📈 管理報表" 
 ])
 
@@ -213,9 +273,11 @@ with tab1:
                 row["處理人"] = new_assignee
                 row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 
+                current_reply_content = "(僅更新截圖)"
                 if reply_text.strip() or v_imgs:
                     count = str(row['百昌回覆']).count("💬 **[第") + 1
-                    new_msg = f"💬 **[第 {count} 次回覆]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{reply_text.strip() or '(僅更新截圖)'}"
+                    current_reply_content = reply_text.strip() or "(僅更新截圖)"
+                    new_msg = f"💬 **[第 {count} 次回覆]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{current_reply_content}"
                     row["百昌回覆"] = str(row["百昌回覆"]) + "\n\n---\n" + new_msg if str(row["百昌回覆"]) else new_msg
                     
                     if v_imgs:
@@ -223,7 +285,35 @@ with tab1:
                         row["百昌截圖_Base64"] = str(row["百昌截圖_Base64"]) + "||" + new_urls if str(row["百昌截圖_Base64"]) else new_urls
                 
                 save_issue(row)
-                st.rerun()
+                
+                # 發送通知給 QAV
+                if btn_submit:
+                    notify_title = f"🚨 [待覆核] 案件 {row['Issue_ID']} 已由百昌處理完成"
+                    notify_body = (
+                        f"**案件編號**: {row['Issue_ID']}  \n"
+                        f"**模組**: {row['模組']}  \n"
+                        f"**處理人**: {row['處理人']}  \n"
+                        f"**優先級**: {row['優先級']}  \n"
+                        f"**最後更新**: {row['最後更新']}  \n\n"
+                        f"**💬 百昌最新回覆**:  \n"
+                        f"```\n{current_reply_content}\n```  \n\n"
+                        f"**📝 原問題描述**:  \n"
+                        f"```\n{row['問題描述']}\n```"
+                    )
+                    success = send_teams_qav_notification(notify_title, notify_body)
+                    if success:
+                        st.success("🚀 處理完成！已送交確認並「成功」發送 Teams 通知，即將重新整理頁面...")
+                        time.sleep(1.5)
+                        st.rerun()
+                    else:
+                        st.error("❌ 案件已送交確認，但 「Teams 通知發送失敗」！請檢查正式區 Secrets 中的 TEAMS_QAV_WEBHOOK 設定是否正確。")
+                        st.info("提示：您可以手動複製回覆內容通知 QAV。頁面將於 5 秒後自動重新整理...")
+                        time.sleep(5.0)
+                        st.rerun()
+                else:
+                    st.success("💾 進度已儲存！即將重新整理頁面...")
+                    time.sleep(1.5)
+                    st.rerun()
     else: st.info("目前沒有待百昌處理的問題。")
 
 # --- Tab 2: 提報問題 ---
@@ -258,7 +348,8 @@ with tab2:
                     "百昌回覆": "", "百昌截圖_Base64": "", "重複次數": "0", "延續自ID": link_id, "最終解決方案": ""
                 }
                 save_issue(new_row)
-                st.success(f"提報成功！編號：{new_id}")
+                st.success(f"🎉 提報成功！編號：{new_id}，即將重新整理頁面...")
+                time.sleep(1.5)
                 st.rerun()
 
 # --- Tab 3: QAV 確認 ---
@@ -283,7 +374,10 @@ with tab3:
                         row["狀態"] = STATUS_CLOSED
                         row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                         row["最終解決方案"] = conclusion.strip()
-                        save_issue(row); st.rerun()
+                        save_issue(row)
+                        st.success("🏆 案件已確認結案！即將重新整理頁面...")
+                        time.sleep(1.5)
+                        st.rerun()
 
                 if c2.form_submit_button("🔄 需補充資訊 (退回)", use_container_width=True):
                     if not reason.strip(): st.error("請填寫退回原因！")
@@ -298,7 +392,10 @@ with tab3:
                         if q_imgs:
                             new_urls = compress_and_upload_images(q_imgs, "qav_return")
                             row["截圖_Base64"] = str(row["截圖_Base64"]) + "||" + new_urls if str(row["截圖_Base64"]) else new_urls
-                        save_issue(row); st.rerun()
+                        save_issue(row)
+                        st.success("🔄 案件已成功退回給百昌！即將重新整理頁面...")
+                        time.sleep(1.5)
+                        st.rerun()
     else: st.success("目前沒有需要確認的項目！")
 
 # --- Tab 4: 歷史檔案庫 (維持原樣：深度搜尋與圖文對話) ---
