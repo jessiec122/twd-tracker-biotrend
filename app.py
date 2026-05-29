@@ -281,13 +281,20 @@ with tab1:
                         f"**📝 原問題描述**:  \n"
                         f"```\n{row['問題描述']}\n```"
                     )
-                    send_teams_qav_notification(notify_title, notify_body)
-                    st.success("🚀 處理完成！已送交確認並通知 QAV 覆核，即將重新整理頁面...")
+                    success = send_teams_qav_notification(notify_title, notify_body)
+                    if success:
+                        st.success("🚀 處理完成！已送交確認並「成功」發送 Teams 通知，即將重新整理頁面...")
+                        time.sleep(1.5)
+                        st.rerun()
+                    else:
+                        st.error("❌ 案件已送交確認，但 「Teams 通知發送失敗」！請檢查 UAT App Secrets 中的 TEAMS_QAV_WEBHOOK 設定是否正確。")
+                        st.info("提示：您可以手動複製回覆內容通知 QAV。頁面將於 5 秒後自動重新整理...")
+                        time.sleep(5.0)
+                        st.rerun()
                 else:
                     st.success("💾 進度已儲存！即將重新整理頁面...")
-                    
-                time.sleep(1.5)
-                st.rerun()
+                    time.sleep(1.5)
+                    st.rerun()
     else: st.info("目前沒有待百昌處理的問題。")
 
 # --- Tab 2: 提報問題 ---
