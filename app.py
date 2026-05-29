@@ -1,7 +1,7 @@
 # ==========================================
 # ⚙️ Configuration (系統參數與配置設定)
 # ==========================================
-PAGE_TITLE = "TWD 問題追蹤系統(正式區)"
+PAGE_TITLE = "TWD 問題追蹤系統"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
@@ -39,7 +39,7 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# 取得資料庫與儲存空間名稱 (可透過 Streamlit Secrets 動態配置，預設為正式區)
+# 取得資料庫與儲存空間名稱 (可透過 Streamlit Secrets 動態配置)
 DB_TABLE = st.secrets.get("DB_TABLE", "issues_prod")
 STORAGE_BUCKET = st.secrets.get("STORAGE_BUCKET", "twd-images-prod")
 
