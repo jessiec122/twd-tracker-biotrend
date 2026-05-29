@@ -1,7 +1,7 @@
 # ==========================================
 # ⚙️ Configuration (系統參數與配置設定)
 # ==========================================
-PAGE_TITLE = "TWD 問題追蹤系統(測試區)"
+PAGE_TITLE = "TWD 問題追蹤系統(正式區)"
 VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
 MODULE_OPTIONS = ["TWD Overall", "QMS", "DMS", "TMS", "Other"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
@@ -21,6 +21,9 @@ import pandas as pd
 import os
 import io
 import uuid
+import time
+import requests
+import json
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from PIL import Image # 用於影像壓縮
@@ -49,7 +52,7 @@ REVERSE_MAP = {v: k for k, v in DB_MAP.items()}
 
 def load_data() -> pd.DataFrame:
     """從 Supabase 讀取資料"""
-    response = supabase.table("issues").select("*").execute()
+    response = supabase.table("issues_prod").select("*").execute()
     if not response.data:
         return pd.DataFrame(columns=list(DB_MAP.values()))
     
@@ -62,7 +65,37 @@ def load_data() -> pd.DataFrame:
 def save_issue(row_dict):
     """將單筆更新或新增寫入 Supabase"""
     db_data = {REVERSE_MAP[k]: str(v) for k, v in row_dict.items() if k in REVERSE_MAP}
-    supabase.table("issues").upsert(db_data).execute()
+    supabase.table("issues_prod").upsert(db_data).execute()
+
+# ==========================================
+# 🔔 Notification Helpers (Teams 通知功能)
+# ==========================================
+def send_teams_qav_notification(title: str, text: str):
+    """
+    將通知發送到 Microsoft Teams (專門通知 QAV 覆核)
+    支援新版 Power Automate 工作流程與舊版 Webhook 格式
+    """
+    webhook_url = st.secrets.get("TEAMS_QAV_WEBHOOK", "")
+    if not webhook_url:
+        return False
+        
+    payload = {
+        "title": title,
+        "text": text
+    }
+    
+    try:
+        response = requests.post(
+            webhook_url,
+            data=json.dumps(payload),
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        return response.status_code in (200, 201, 202)
+    except Exception as e:
+        # 於 Streamlit 後台印出錯誤，但不中斷前端操作
+        print(f"Teams 通知發送失敗: {e}")
+        return False
 
 # ==========================================
 # 🖼️ Helpers: 圖片壓縮與雲端圖庫上傳
@@ -99,6 +132,7 @@ def compress_and_upload_images(uploaded_files, folder="images"):
             urls.append(public_url)
         except Exception as e:
             st.error(f"圖片處理失敗: {e}")
+            st.stop() # 停止程式執行，防止 st.rerun() 瞬間刷掉錯誤訊息
             
     return "||".join(urls)
 
@@ -150,10 +184,21 @@ with st.sidebar:
     st.metric("待 Eirgenix QAV 確認", review_count)
     
     st.divider()
-    with st.expander("⚙️ 系統備份", expanded=False):
-        if not df.empty:
-            csv_data = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 下載全庫備份 (CSV)", data=csv_data, file_name=f"TWD_Backup_{datetime.now().strftime('%Y%m%d')}.csv", use_container_width=True)
+    st.markdown("### 📊 報表下載")
+    
+    if not df.empty:
+        # 使用 utf-8-sig 確保 Excel 打開不會亂碼
+        csv_data = df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 下載案件總表 (CSV)", 
+            data=csv_data, 
+            file_name=f"TWD_案件追蹤總表_{datetime.now().strftime('%Y%m%d')}.csv", 
+            mime="text/csv",
+            use_container_width=True
+        )
+    else:
+        st.info("目前尚無資料可供下載")
+
 
 st.title(PAGE_TITLE)
 
@@ -162,7 +207,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "➕ 提報問題", 
     f"🔍 QAV確認 ({review_count})", 
     "📂 歷史檔案庫", 
-    f"📊 案件總表({total_count})",   # <-- 這是給主管的新頁籤
+    f"📊 案件總表({total_count})",   # <-- 這是主管的新頁籤
     "📈 管理報表" 
 ])
 
@@ -200,11 +245,13 @@ with tab1:
                 elif row["狀態"] == STATUS_REPORTED: row["狀態"] = STATUS_IN_PROGRESS
                 
                 row["處理人"] = new_assignee
-                row["最後更新"] = datetime.now().strftime("%Y-%m-%d")
+                row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 
+                current_reply_content = "(僅更新截圖)"
                 if reply_text.strip() or v_imgs:
                     count = str(row['百昌回覆']).count("💬 **[第") + 1
-                    new_msg = f"💬 **[第 {count} 次回覆]** ({datetime.now().strftime('%Y-%m-%d')}):\n{reply_text.strip() or '(僅更新截圖)'}"
+                    current_reply_content = reply_text.strip() or "(僅更新截圖)"
+                    new_msg = f"💬 **[第 {count} 次回覆]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{current_reply_content}"
                     row["百昌回覆"] = str(row["百昌回覆"]) + "\n\n---\n" + new_msg if str(row["百昌回覆"]) else new_msg
                     
                     if v_imgs:
@@ -212,6 +259,27 @@ with tab1:
                         row["百昌截圖_Base64"] = str(row["百昌截圖_Base64"]) + "||" + new_urls if str(row["百昌截圖_Base64"]) else new_urls
                 
                 save_issue(row)
+                
+                # 發送通知給 QAV
+                if btn_submit:
+                    notify_title = f"🚨 [待覆核] 案件 {row['Issue_ID']} 已由百昌處理完成"
+                    notify_body = (
+                        f"**案件編號**: {row['Issue_ID']}  \n"
+                        f"**模組**: {row['模組']}  \n"
+                        f"**處理人**: {row['處理人']}  \n"
+                        f"**優先級**: {row['優先級']}  \n"
+                        f"**最後更新**: {row['最後更新']}  \n\n"
+                        f"**💬 百昌最新回覆**:  \n"
+                        f"```\n{current_reply_content}\n```  \n\n"
+                        f"**📝 原問題描述**:  \n"
+                        f"```\n{row['問題描述']}\n```"
+                    )
+                    send_teams_qav_notification(notify_title, notify_body)
+                    st.success("🚀 處理完成！已送交確認並通知 QAV 覆核，即將重新整理頁面...")
+                else:
+                    st.success("💾 進度已儲存！即將重新整理頁面...")
+                    
+                time.sleep(1.5)
                 st.rerun()
     else: st.info("目前沒有待百昌處理的問題。")
 
@@ -240,14 +308,15 @@ with tab2:
                 else: new_id = "TWD-001"
                     
                 new_row = {
-                    "Issue_ID": new_id, "建立日期": today.strftime("%Y-%m-%d"), "最後更新": today.strftime("%Y-%m-%d"),
+                    "Issue_ID": new_id, "建立日期": today.strftime("%Y-%m-%d"), "最後更新": today.strftime("%Y-%m-%d  %H:%M"),
                     "Due_Date": due_date, "模組": module, "優先級": priority, "處理人": assignee,
                     "狀態": STATUS_REPORTED, "問題描述": desc.strip(), 
                     "截圖_Base64": compress_and_upload_images(imgs, "qav"),
                     "百昌回覆": "", "百昌截圖_Base64": "", "重複次數": "0", "延續自ID": link_id, "最終解決方案": ""
                 }
                 save_issue(new_row)
-                st.success(f"提報成功！編號：{new_id}")
+                st.success(f"🎉 提報成功！編號：{new_id}，即將重新整理頁面...")
+                time.sleep(1.5)
                 st.rerun()
 
 # --- Tab 3: QAV 確認 ---
@@ -270,9 +339,12 @@ with tab3:
                     if not conclusion.strip(): st.error("請填寫最終解決方案！")
                     else:
                         row["狀態"] = STATUS_CLOSED
-                        row["最後更新"] = datetime.now().strftime("%Y-%m-%d")
+                        row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                         row["最終解決方案"] = conclusion.strip()
-                        save_issue(row); st.rerun()
+                        save_issue(row)
+                        st.success("🏆 案件已確認結案！即將重新整理頁面...")
+                        time.sleep(1.5)
+                        st.rerun()
 
                 if c2.form_submit_button("🔄 需補充資訊 (退回)", use_container_width=True):
                     if not reason.strip(): st.error("請填寫退回原因！")
@@ -280,14 +352,17 @@ with tab3:
                         rt = int(row["重複次數"]) if str(row["重複次數"]).isdigit() else 0
                         row["狀態"] = STATUS_REOPENED
                         row["重複次數"] = str(rt + 1)
-                        row["最後更新"] = datetime.now().strftime("%Y-%m-%d")
+                        row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                         row["Due_Date"] = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d") # 展延2天
                         
-                        row["問題描述"] = str(row['問題描述']) + f"\n\n---\n📌 **[第 {rt+1} 次補充]** ({datetime.now().strftime('%Y-%m-%d')}):\n{reason.strip()}"
+                        row["問題描述"] = str(row['問題描述']) + f"\n\n---\n📌 **[第 {rt+1} 次補充]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{reason.strip()}"
                         if q_imgs:
                             new_urls = compress_and_upload_images(q_imgs, "qav_return")
                             row["截圖_Base64"] = str(row["截圖_Base64"]) + "||" + new_urls if str(row["截圖_Base64"]) else new_urls
-                        save_issue(row); st.rerun()
+                        save_issue(row)
+                        st.success("🔄 案件已成功退回給百昌！即將重新整理頁面...")
+                        time.sleep(1.5)
+                        st.rerun()
     else: st.success("目前沒有需要確認的項目！")
 
 # --- Tab 4: 歷史檔案庫 (維持原樣：深度搜尋與圖文對話) ---
