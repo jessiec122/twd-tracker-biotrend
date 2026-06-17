@@ -394,7 +394,7 @@ with tab2:
 with tab3:
     df_review = df[df["狀態"] == STATUS_REVIEW].copy()
     if not df_review.empty:
-        st.dataframe(df_review[["Issue_ID", "Due_Date", "處理人", "優先級", "問題描述", "QAV筆記", "狀態"]], use_container_width=True, height=250, hide_index=True)
+        st.dataframe(df_review[["Issue_ID", "問題描述", "Due_Date", "處理人", "QAV筆記"]], use_container_width=True, height=250, hide_index=True)
         st.divider()
         
         review_id = st.selectbox("選擇要確認的項目", df_review["Issue_ID"].tolist(), index=None)
