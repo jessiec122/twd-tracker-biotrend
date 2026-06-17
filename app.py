@@ -62,6 +62,12 @@ def load_data() -> pd.DataFrame:
     
     df = pd.DataFrame(response.data)
     df = df.rename(columns=DB_MAP).fillna("")
+    
+    # 確保所有 DB_MAP 對應的中文欄位都存在於 DataFrame 中 (避免舊資料缺漏欄位造成 KeyError)
+    for col in DB_MAP.values():
+        if col not in df.columns:
+            df[col] = ""
+            
     # 確保按 Issue_ID 排序
     df = df.sort_values("Issue_ID").reset_index(drop=True)
     return df
