@@ -50,7 +50,7 @@ DB_MAP = {
     "assignee": "處理人", "status": "狀態", "description": "問題描述",
     "image_urls": "截圖_Base64", "vendor_reply": "百昌回覆",
     "vendor_image_urls": "百昌截圖_Base64", "repeat_count": "重複次數",
-    "link_id": "延續自ID", "final_solution": "最終解決方案"
+    "link_id": "延續自ID", "final_solution": "最終解決方案", "qav_notes": "QAV筆記"
 }
 REVERSE_MAP = {v: k for k, v in DB_MAP.items()}
 
@@ -246,7 +246,7 @@ with tab1:
     df_active = df[df["狀態"].isin([STATUS_REPORTED, STATUS_IN_PROGRESS, STATUS_REOPENED])].copy()
     if not df_active.empty:
         df_active["健康度"] = df_active["Due_Date"].apply(get_due_date_status)
-        st.dataframe(df_active[["Issue_ID", "健康度", "Due_Date", "處理人", "模組", "狀態"]], use_container_width=True, height=250, hide_index=True)
+        st.dataframe(df_active[["Issue_ID", "健康度", "Due_Date", "處理人", "優先級", "問題描述", "狀態"]], use_container_width=True, height=250, hide_index=True)
         st.divider()
         
         update_id = st.selectbox("選擇處理編號", options=df_active["Issue_ID"].tolist(), index=None, placeholder="請選擇要處理的 Issue ID...")
@@ -261,6 +261,20 @@ with tab1:
                 col_up1, col_up2 = st.columns([1, 2])
                 with col_up1:
                     new_assignee = st.selectbox("認領人", VENDORS_LIST, index=VENDORS_LIST.index(row["處理人"]) if row["處理人"] in VENDORS_LIST else 0)
+                    
+                    st.divider()
+                    st.caption("修改期限 (需密碼)")
+                    use_new_date = st.checkbox("修改期限", key=f"c_date_{update_id}")
+                    default_d = datetime.now().date()
+                    if row.get("Due_Date") and row.get("Due_Date") != "未設定":
+                        try:
+                            default_d = datetime.strptime(str(row["Due_Date"]).split(" ")[0], "%Y-%m-%d").date()
+                        except:
+                            pass
+                    new_due_date = st.date_input("新期限", value=default_d, disabled=not use_new_date, key=f"d_{update_id}")
+                    pwd = st.text_input("授權密碼", type="password", disabled=not use_new_date, key=f"p_{update_id}")
+                    st.divider()
+                    
                     v_imgs = st.file_uploader("上傳截圖 (自動壓縮)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
                 with col_up2:
                     reply_text = st.text_area("填寫回覆", height=100)
@@ -271,6 +285,13 @@ with tab1:
                 btn_submit = c2.form_submit_button("🚀 處理完成 (送交確認)", type="primary", use_container_width=True)
 
             if btn_save or btn_submit:
+                if use_new_date:
+                    if pwd != "1234qwer":
+                        st.error("密碼錯誤，無法修改期限！")
+                        st.stop()
+                    else:
+                        row["Due_Date"] = new_due_date.strftime("%Y-%m-%d")
+                        
                 if btn_submit: row["狀態"] = STATUS_REVIEW
                 elif row["狀態"] == STATUS_REPORTED: row["狀態"] = STATUS_IN_PROGRESS
                 
@@ -323,11 +344,15 @@ with tab1:
 # --- Tab 2: 提報問題 ---
 with tab2:
     with st.form("new_issue", clear_on_submit=True):
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
         module = c1.selectbox("模組", MODULE_OPTIONS)
         assignee = c2.selectbox("處理人", VENDORS_LIST)
         priority = c3.selectbox("優先級", PRIORITY_OPTIONS)
-        link_id = c4.text_input("延續自 ID")
+        
+        c4, c5 = st.columns(2)
+        use_custom_date = c4.checkbox("手動指定期限")
+        custom_date = c4.date_input("自訂期限", value=datetime.now().date(), disabled=not use_custom_date)
+        link_id = c5.text_input("延續自 ID")
         
         desc = st.text_area("詳細問題描述 ⭐ (必填)")
         imgs = st.file_uploader("上傳截圖 (自動壓縮)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
@@ -335,8 +360,11 @@ with tab2:
         if st.form_submit_button("📢 提交問題"):
             if not desc.strip(): st.error("請輸入詳細問題描述！")
             else:
-                today = datetime.now()
-                due_date = (today + timedelta(days={"急":1, "一周內":7}.get(priority, 30))).strftime("%Y-%m-%d")
+                if use_custom_date:
+                    due_date = custom_date.strftime("%Y-%m-%d")
+                else:
+                    today = datetime.now()
+                    due_date = (today + timedelta(days={"急":1, "一周內":7}.get(priority, 30))).strftime("%Y-%m-%d")
                 
                 # 自動產號
                 if not df.empty:
@@ -349,7 +377,7 @@ with tab2:
                     "Due_Date": due_date, "模組": module, "優先級": priority, "處理人": assignee,
                     "狀態": STATUS_REPORTED, "問題描述": desc.strip(), 
                     "截圖_Base64": compress_and_upload_images(imgs, "qav"),
-                    "百昌回覆": "", "百昌截圖_Base64": "", "重複次數": "0", "延續自ID": link_id, "最終解決方案": ""
+                    "百昌回覆": "", "百昌截圖_Base64": "", "重複次數": "0", "延續自ID": link_id, "最終解決方案": "", "QAV筆記": ""
                 }
                 save_issue(new_row)
                 st.success(f"🎉 提報成功！編號：{new_id}，即將重新整理頁面...")
@@ -358,8 +386,11 @@ with tab2:
 
 # --- Tab 3: QAV 確認 ---
 with tab3:
-    df_review = df[df["狀態"] == STATUS_REVIEW]
+    df_review = df[df["狀態"] == STATUS_REVIEW].copy()
     if not df_review.empty:
+        st.dataframe(df_review[["Issue_ID", "Due_Date", "處理人", "優先級", "問題描述", "QAV筆記", "狀態"]], use_container_width=True, height=250, hide_index=True)
+        st.divider()
+        
         review_id = st.selectbox("選擇要確認的項目", df_review["Issue_ID"].tolist(), index=None)
         if review_id:
             row = df[df["Issue_ID"] == review_id].iloc[0].to_dict()
@@ -367,24 +398,59 @@ with tab3:
                 render_history_comparison(row)
             
             with st.form(key=f"qav_form_{review_id}", clear_on_submit=True):
-                conclusion = st.text_area("最終解決方案 / 結論總結 ⭐ (若同意結案則必填)", height=80)
-                reason = st.text_area("重新討論原因 ⭐ (若需重新討論則必填)", height=80)
-                q_imgs = st.file_uploader("補充截圖 (自動壓縮)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+                c_up1, c_up2 = st.columns([1, 2])
+                with c_up1:
+                    st.caption("修改期限 (需密碼)")
+                    use_new_date_q = st.checkbox("修改期限", key=f"qc_date_{review_id}")
+                    default_dq = datetime.now().date()
+                    if row.get("Due_Date") and row.get("Due_Date") != "未設定":
+                        try:
+                            default_dq = datetime.strptime(str(row["Due_Date"]).split(" ")[0], "%Y-%m-%d").date()
+                        except:
+                            pass
+                    new_due_date_q = st.date_input("新期限", value=default_dq, disabled=not use_new_date_q, key=f"qd_{review_id}")
+                    pwd_q = st.text_input("授權密碼", type="password", disabled=not use_new_date_q, key=f"qp_{review_id}")
+                    q_imgs = st.file_uploader("補充截圖 (自動壓縮)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+                with c_up2:
+                    qav_notes = st.text_area("QAV 暫存筆記 (僅儲存不變更狀態)", value=str(row.get("QAV筆記", "")).replace("nan", ""), height=80)
+                    conclusion = st.text_area("最終解決方案 / 結論總結 ⭐ (若同意結案則必填)", height=80)
+                    reason = st.text_area("重新討論原因 ⭐ (若需重新討論則必填)", height=80)
                 
-                c1, c2 = st.columns(2)
-                if c1.form_submit_button("✅ 確認結案", type="primary", use_container_width=True):
-                    if not conclusion.strip(): st.error("請填寫最終解決方案！")
-                    else:
-                        row["狀態"] = STATUS_CLOSED
+                c1, c2, c3 = st.columns(3)
+                btn_qav_save = c1.form_submit_button("💾 僅儲存進度 (暫存筆記)", use_container_width=True)
+                btn_qav_close = c2.form_submit_button("✅ 確認結案", type="primary", use_container_width=True)
+                btn_qav_return = c3.form_submit_button("🔄 需補充資訊 (退回)", use_container_width=True)
+                
+                if btn_qav_save or btn_qav_close or btn_qav_return:
+                    if use_new_date_q:
+                        if pwd_q != "1234qwer":
+                            st.error("密碼錯誤，無法修改期限！")
+                            st.stop()
+                        else:
+                            row["Due_Date"] = new_due_date_q.strftime("%Y-%m-%d")
+                            
+                    row["QAV筆記"] = qav_notes.strip()
+                    
+                    if btn_qav_save:
                         row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-                        row["最終解決方案"] = conclusion.strip()
                         save_issue(row)
-                        st.success("🏆 案件已確認結案！即將重新整理頁面...")
+                        st.success("💾 筆記與進度已儲存！即將重新整理頁面...")
                         time.sleep(1.5)
                         st.rerun()
+                
+                    elif btn_qav_close:
+                        if not conclusion.strip(): st.error("請填寫最終解決方案！")
+                        else:
+                            row["狀態"] = STATUS_CLOSED
+                            row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                            row["最終解決方案"] = conclusion.strip()
+                            save_issue(row)
+                            st.success("🏆 案件已確認結案！即將重新整理頁面...")
+                            time.sleep(1.5)
+                            st.rerun()
 
-                if c2.form_submit_button("🔄 需補充資訊 (退回)", use_container_width=True):
-                    if not reason.strip(): st.error("請填寫退回原因！")
+                    elif btn_qav_return:
+                        if not reason.strip(): st.error("請填寫退回原因！")
                     else:
                         rt = int(row["重複次數"]) if str(row["重複次數"]).isdigit() else 0
                         row["狀態"] = STATUS_REOPENED
@@ -423,7 +489,9 @@ with tab5:
     c1, c2, c3 = st.columns([2, 1, 1])
     search_tab5 = c1.text_input("🔍 快速搜尋 (支援 ID、描述、解答)", key="search_tab5")
     filter_module = c2.selectbox("按模組篩選", ["全部"] + MODULE_OPTIONS, key="mod_tab5")
-    filter_status = c3.selectbox("按狀態篩選", ["全部", STATUS_REPORTED, STATUS_IN_PROGRESS, STATUS_REVIEW, STATUS_CLOSED, STATUS_REOPENED], key="stat_tab5")
+    
+    status_options = ["全部", "百昌待處理", "QAV確認", STATUS_CLOSED]
+    filter_status_display = c3.selectbox("按狀態篩選", status_options, key="stat_tab5")
     
     # 執行過濾邏輯
     df_summary = df.copy()
@@ -431,8 +499,14 @@ with tab5:
         df_summary = df_summary[df_summary.astype(str).apply(lambda col: col.str.contains(search_tab5, case=False, na=False)).any(axis=1)]
     if filter_module != "全部":
         df_summary = df_summary[df_summary["模組"] == filter_module]
-    if filter_status != "全部":
-        df_summary = df_summary[df_summary["狀態"] == filter_status]
+        
+    if filter_status_display != "全部":
+        if filter_status_display == "百昌待處理":
+            df_summary = df_summary[df_summary["狀態"].isin([STATUS_REPORTED, STATUS_IN_PROGRESS, STATUS_REOPENED])]
+        elif filter_status_display == "QAV確認":
+            df_summary = df_summary[df_summary["狀態"] == STATUS_REVIEW]
+        else:
+            df_summary = df_summary[df_summary["狀態"] == filter_status_display]
 
     # 只挑選主管最在意的欄位
     view_cols = ["Issue_ID", "模組", "狀態", "處理人", "Due_Date", "問題描述", "最終解決方案"]
@@ -442,7 +516,7 @@ with tab5:
         df_summary[view_cols],
         use_container_width=True,
         hide_index=True,
-        height=500,
+        height=350,
         column_config={
             "Issue_ID": st.column_config.TextColumn("編號", width="small"),
             "模組": st.column_config.TextColumn("模組", width="small"),
@@ -453,6 +527,15 @@ with tab5:
             "最終解決方案": st.column_config.TextColumn("最終解答", width="large")
         }
     )
+
+    st.divider()
+    search_id_tab5 = st.selectbox("選擇查看詳細紀錄", df_summary["Issue_ID"].tolist() if not df_summary.empty else [], index=None, key="select_tab5")
+    if search_id_tab5:
+        r = df[df["Issue_ID"] == search_id_tab5].iloc[0]
+        st.write(f"**狀態:** {r['狀態']} | **重新討論:** {r['重複次數']} 次 | **預計完成日:** {r.get('Due_Date', '未設定')}")
+        if pd.notna(r.get('最終解決方案')) and str(r['最終解決方案']).strip():
+            st.success(f"🏆 **最終解決方案:**\n\n{r['最終解決方案']}")
+        render_history_comparison(r)
 
 # --- Tab 6: 數據報表 (原 Tab 5) ---
 with tab6:
