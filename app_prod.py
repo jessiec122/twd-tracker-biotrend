@@ -457,21 +457,21 @@ with tab3:
 
                     elif btn_qav_return:
                         if not reason.strip(): st.error("請填寫退回原因！")
-                    else:
-                        rt = int(row["重複次數"]) if str(row["重複次數"]).isdigit() else 0
-                        row["狀態"] = STATUS_REOPENED
-                        row["重複次數"] = str(rt + 1)
-                        row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-                        row["Due_Date"] = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d") # 展延2天
-                        
-                        row["問題描述"] = str(row['問題描述']) + f"\n\n---\n📌 **[第 {rt+1} 次補充]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{reason.strip()}"
-                        if q_imgs:
-                            new_urls = compress_and_upload_images(q_imgs, "qav_return")
-                            row["截圖_Base64"] = str(row["截圖_Base64"]) + "||" + new_urls if str(row["截圖_Base64"]) else new_urls
-                        save_issue(row)
-                        st.success("🔄 案件已成功退回給百昌！即將重新整理頁面...")
-                        time.sleep(1.5)
-                        st.rerun()
+                        else:
+                            rt = int(row["重複次數"]) if str(row["重複次數"]).isdigit() else 0
+                            row["狀態"] = STATUS_REOPENED
+                            row["重複次數"] = str(rt + 1)
+                            row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                            row["Due_Date"] = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d") # 展延2天
+                            
+                            row["問題描述"] = str(row['問題描述']) + f"\n\n---\n📌 **[第 {rt+1} 次補充]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{reason.strip()}"
+                            if q_imgs:
+                                new_urls = compress_and_upload_images(q_imgs, "qav_return")
+                                row["截圖_Base64"] = str(row["截圖_Base64"]) + "||" + new_urls if str(row["截圖_Base64"]) else new_urls
+                            save_issue(row)
+                            st.success("🔄 案件已成功退回給百昌！即將重新整理頁面...")
+                            time.sleep(1.5)
+                            st.rerun()
     else: st.success("目前沒有需要確認的項目！")
 
 # --- Tab 4: 歷史檔案庫 (維持原樣：深度搜尋與圖文對話) ---
