@@ -252,7 +252,7 @@ with tab1:
     df_active = df[df["狀態"].isin([STATUS_REPORTED, STATUS_IN_PROGRESS, STATUS_REOPENED])].copy()
     if not df_active.empty:
         df_active["健康度"] = df_active["Due_Date"].apply(get_due_date_status)
-        st.dataframe(df_active[["Issue_ID", "健康度", "Due_Date", "處理人", "優先級", "問題描述", "狀態"]], use_container_width=True, height=250, hide_index=True)
+        st.dataframe(df_active[["Issue_ID", "問題描述", "Due_Date", "處理人", "健康度"]], use_container_width=True, height=250, hide_index=True)
         st.divider()
         
         update_id = st.selectbox("選擇處理編號", options=df_active["Issue_ID"].tolist(), index=None, placeholder="請選擇要處理的 Issue ID...")
