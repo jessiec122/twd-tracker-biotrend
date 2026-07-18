@@ -679,31 +679,27 @@ with tab7:
                 request_id = st.selectbox("選擇展延申請", pending_requests["id"].tolist(), key="pending_extension_id")
                 selected_request = pending_requests[pending_requests["id"] == request_id].iloc[0]
                 with st.form(f"review_extension_{request_id}"):
-                    reviewer = st.text_input("QAV 審核人 ⭐ (必填)")
                     review_note = st.text_area("審核說明")
                     approve_col, reject_col = st.columns(2)
                     approve = approve_col.form_submit_button("核准並更新 Due date", type="primary", use_container_width=True)
                     reject = reject_col.form_submit_button("駁回申請", use_container_width=True)
                 if approve or reject:
-                    if not reviewer.strip():
-                        st.error("請填寫 QAV 審核人。")
-                    else:
-                        try:
-                            now = datetime.now().strftime("%Y-%m-%d %H:%M")
-                            if approve:
-                                supabase.table(DB_TABLE).update({
-                                    "due_date": str(selected_request["requested_due_date"]), "updated_date": now
-                                }).eq("issue_id", selected_request["issue_id"]).execute()
-                            extension_supabase.table(EXTENSION_REQUESTS_TABLE).update({
-                                "status": "核准" if approve else "駁回",
-                                "review_note": review_note.strip(), "reviewed_by": reviewer.strip(),
-                                "reviewed_at": datetime.now().isoformat()
-                            }).eq("id", int(request_id)).execute()
-                            st.success("已核准並更新 Due date。" if approve else "已駁回展延申請，原 Due date 維持不變。")
-                            time.sleep(1)
-                            st.rerun()
-                        except Exception as error:
-                            st.error(f"審核失敗：{error}")
+                    try:
+                        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        if approve:
+                            supabase.table(DB_TABLE).update({
+                                "due_date": str(selected_request["requested_due_date"]), "updated_date": now
+                            }).eq("issue_id", selected_request["issue_id"]).execute()
+                        extension_supabase.table(EXTENSION_REQUESTS_TABLE).update({
+                            "status": "核准" if approve else "駁回",
+                            "review_note": review_note.strip(), "reviewed_by": "QAV 密碼授權",
+                            "reviewed_at": datetime.now().isoformat()
+                        }).eq("id", int(request_id)).execute()
+                        st.success("已核准並更新 Due date。" if approve else "已駁回展延申請，原 Due date 維持不變。")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as error:
+                        st.error(f"審核失敗：{error}")
 
             st.divider()
             st.subheader("QAV 直接調整 Due date")
