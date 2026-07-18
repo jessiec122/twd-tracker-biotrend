@@ -24,7 +24,8 @@ import uuid
 import time
 import requests
 import json
-from datetime import datetime, timedelta
+import hmac
+from datetime import datetime, timedelta, date
 from supabase import create_client, Client
 from PIL import Image # 用於影像壓縮
 
@@ -42,6 +43,7 @@ supabase = init_supabase()
 # 取得資料庫與儲存空間名稱 (可透過 Streamlit Secrets 動態配置)
 DB_TABLE = st.secrets.get("DB_TABLE", "issues_prod")
 STORAGE_BUCKET = st.secrets.get("STORAGE_BUCKET", "twd-images-prod")
+EXTENSION_REQUESTS_TABLE = st.secrets.get("EXTENSION_REQUESTS_TABLE", "twd_due_date_extension_requests")
 
 # 欄位中英對照表 (確保前端介面不變，後端存英文)
 DB_MAP = {
@@ -76,6 +78,31 @@ def save_issue(row_dict):
     """將單筆更新或新增寫入 Supabase"""
     db_data = {REVERSE_MAP[k]: str(v) for k, v in row_dict.items() if k in REVERSE_MAP}
     supabase.table(DB_TABLE).upsert(db_data).execute()
+
+def parse_date(value):
+    try:
+        return datetime.strptime(str(value).split(" ")[0], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+def get_case_age(created_date):
+    created = parse_date(created_date)
+    return f"{(date.today() - created).days} 天" if created else "未設定"
+
+def get_case_metadata(row):
+    return (
+        f"**建立日期:** {row.get('建立日期', '未設定')} | "
+        f"**開案天數:** {get_case_age(row.get('建立日期'))} | "
+        f"**預計完成日:** {row.get('Due_Date', '未設定')}"
+    )
+
+def load_extension_requests():
+    try:
+        response = supabase.table(EXTENSION_REQUESTS_TABLE).select("*").order("requested_at", desc=True).execute()
+        return pd.DataFrame(response.data or [])
+    except Exception as error:
+        st.error(f"無法讀取展延申請。請先建立資料表：{error}")
+        return None
 
 # ==========================================
 # 🔔 Notification Helpers (Teams 通知功能)
@@ -238,13 +265,14 @@ with st.sidebar:
 
 st.title(PAGE_TITLE)
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     f"📋 百昌待處理 ({active_count})", 
     "➕ 提報問題", 
     f"🔍 QAV確認 ({review_count})", 
     "📂 歷史檔案庫", 
     f"📊 案件總表({total_count})",   # <-- 這是主管的新頁籤
-    "📈 管理報表" 
+    "📈 管理報表",
+    "🔐 QAV 期限管理"
 ])
 
 # --- Tab 1: 百昌待處理清單 ---
@@ -252,7 +280,8 @@ with tab1:
     df_active = df[df["狀態"].isin([STATUS_REPORTED, STATUS_IN_PROGRESS, STATUS_REOPENED])].copy()
     if not df_active.empty:
         df_active["健康度"] = df_active["Due_Date"].apply(get_due_date_status)
-        st.dataframe(df_active[["Issue_ID", "問題描述", "Due_Date", "處理人", "健康度"]], use_container_width=True, height=250, hide_index=True)
+        df_active["開案天數"] = df_active["建立日期"].apply(get_case_age)
+        st.dataframe(df_active[["Issue_ID", "建立日期", "開案天數", "問題描述", "Due_Date", "處理人", "健康度"]], use_container_width=True, height=250, hide_index=True)
         st.divider()
         
         update_id = st.selectbox("選擇處理編號", options=df_active["Issue_ID"].tolist(), index=None, placeholder="請選擇要處理的 Issue ID...")
@@ -260,6 +289,7 @@ with tab1:
             row = df[df["Issue_ID"] == update_id].iloc[0].to_dict()
             with st.container(border=True):
                 st.info(f"**健康度:** {get_due_date_status(row.get('Due_Date', ''))} | **優先級:** {row['優先級']}")
+                st.caption(get_case_metadata(row))
                 st.markdown(f"**💬 台康問題：**\n\n{str(row['問題描述']).replace('\n', '  \n')}")
                 render_image_gallery(row.get("截圖_Base64", ""), "台康圖片")
 
@@ -267,18 +297,6 @@ with tab1:
                 col_up1, col_up2 = st.columns([1, 2])
                 with col_up1:
                     new_assignee = st.selectbox("認領人", VENDORS_LIST, index=VENDORS_LIST.index(row["處理人"]) if row["處理人"] in VENDORS_LIST else 0)
-                    
-                    st.divider()
-                    st.caption("修改期限 (需密碼)")
-                    use_new_date = st.checkbox("修改期限", key=f"c_date_{update_id}")
-                    default_d = datetime.now().date()
-                    if row.get("Due_Date") and row.get("Due_Date") != "未設定":
-                        try:
-                            default_d = datetime.strptime(str(row["Due_Date"]).split(" ")[0], "%Y-%m-%d").date()
-                        except:
-                            pass
-                    new_due_date = st.date_input("新期限", value=default_d, disabled=not use_new_date, key=f"d_{update_id}")
-                    pwd = st.text_input("授權密碼", type="password", disabled=not use_new_date, key=f"p_{update_id}")
                     st.divider()
                     
                     v_imgs = st.file_uploader("上傳截圖 (自動壓縮)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
@@ -291,13 +309,6 @@ with tab1:
                 btn_submit = c2.form_submit_button("🚀 處理完成 (送交確認)", type="primary", use_container_width=True)
 
             if btn_save or btn_submit:
-                if use_new_date:
-                    if pwd != "1234qwer":
-                        st.error("密碼錯誤，無法修改期限！")
-                        st.stop()
-                    else:
-                        row["Due_Date"] = new_due_date.strftime("%Y-%m-%d")
-                        
                 if btn_submit: row["狀態"] = STATUS_REVIEW
                 elif row["狀態"] == STATUS_REPORTED: row["狀態"] = STATUS_IN_PROGRESS
                 
@@ -345,6 +356,44 @@ with tab1:
                     st.success("💾 進度已儲存！即將重新整理頁面...")
                     time.sleep(1.5)
                     st.rerun()
+
+            with st.expander("申請展延期限"):
+                current_due_date = parse_date(row.get("Due_Date"))
+                if not current_due_date:
+                    st.warning("此案件沒有有效的 Due date，請聯絡 QAV 設定期限。")
+                else:
+                    with st.form(key=f"extension_form_{update_id}", clear_on_submit=True):
+                        requested_due_date = st.date_input(
+                            "希望展延至", value=current_due_date + timedelta(days=1),
+                            min_value=current_due_date + timedelta(days=1), key=f"extension_date_{update_id}"
+                        )
+                        requester = st.text_input("申請人", value=str(row.get("處理人", "")), key=f"extension_requester_{update_id}")
+                        extension_reason = st.text_area("展延原因 ⭐ (必填)", key=f"extension_reason_{update_id}")
+                        submit_extension = st.form_submit_button("送出展延申請", use_container_width=True)
+
+                    if submit_extension:
+                        if not requester.strip() or not extension_reason.strip():
+                            st.error("請填寫申請人與展延原因。")
+                        else:
+                            try:
+                                supabase.table(EXTENSION_REQUESTS_TABLE).insert({
+                                    "issue_id": row["Issue_ID"],
+                                    "current_due_date": current_due_date.isoformat(),
+                                    "requested_due_date": requested_due_date.isoformat(),
+                                    "reason": extension_reason.strip(),
+                                    "requested_by": requester.strip(),
+                                    "status": "待QAV核准",
+                                    "request_type": "廠商展延申請"
+                                }).execute()
+                                send_teams_qav_notification(
+                                    f"[展延申請] {row['Issue_ID']}",
+                                    f"**案件編號**: {row['Issue_ID']}  \n**目前期限**: {current_due_date}  \n"
+                                    f"**申請期限**: {requested_due_date}  \n**申請人**: {requester.strip()}  \n"
+                                    f"**展延原因**: {extension_reason.strip()}"
+                                )
+                                st.success("展延申請已送出，原 Due date 在 QAV 核准前不會變更。")
+                            except Exception as error:
+                                st.error(f"送出失敗；若已送出相同案件的待審核申請，請等待 QAV 回覆。{error}")
     else: st.info("目前沒有待百昌處理的問題。")
 
 # --- Tab 2: 提報問題 ---
@@ -356,8 +405,13 @@ with tab2:
         priority = c3.selectbox("優先級", PRIORITY_OPTIONS)
         
         c4, c5 = st.columns(2)
-        use_custom_date = c4.checkbox("手動指定期限")
-        custom_date = c4.date_input("自訂期限", value=datetime.now().date(), disabled=not use_custom_date)
+        due_options = {"明天": 1, "3 天後": 3, "一週後": 7, "兩週後": 14, "一個月後": 30, "自訂日期": None}
+        due_choice = c4.radio("Due date 快速設定", list(due_options), index=2, horizontal=True)
+        custom_date = c4.date_input(
+            "自訂 Due date", value=(datetime.now() + timedelta(days=7)).date(),
+            min_value=datetime.now().date(), disabled=due_choice != "自訂日期"
+        )
+        c4.caption("優先級與期限可分開設定；選擇「自訂日期」後，可直接從日曆挑選。")
         link_id = c5.text_input("延續自 ID")
         
         desc = st.text_area("詳細問題描述 ⭐ (必填)")
@@ -366,11 +420,9 @@ with tab2:
         if st.form_submit_button("📢 提交問題"):
             if not desc.strip(): st.error("請輸入詳細問題描述！")
             else:
-                if use_custom_date:
-                    due_date = custom_date.strftime("%Y-%m-%d")
-                else:
-                    today = datetime.now()
-                    due_date = (today + timedelta(days={"急":1, "一周內":7}.get(priority, 30))).strftime("%Y-%m-%d")
+                today = datetime.now()
+                due_date = custom_date if due_choice == "自訂日期" else (today + timedelta(days=due_options[due_choice])).date()
+                due_date = due_date.strftime("%Y-%m-%d")
                 
                 # 自動產號
                 if not df.empty:
@@ -394,28 +446,20 @@ with tab2:
 with tab3:
     df_review = df[df["狀態"] == STATUS_REVIEW].copy()
     if not df_review.empty:
-        st.dataframe(df_review[["Issue_ID", "問題描述", "Due_Date", "處理人", "QAV筆記"]], use_container_width=True, height=250, hide_index=True)
+        df_review["開案天數"] = df_review["建立日期"].apply(get_case_age)
+        st.dataframe(df_review[["Issue_ID", "建立日期", "開案天數", "問題描述", "Due_Date", "處理人", "QAV筆記"]], use_container_width=True, height=250, hide_index=True)
         st.divider()
         
         review_id = st.selectbox("選擇要確認的項目", df_review["Issue_ID"].tolist(), index=None)
         if review_id:
             row = df[df["Issue_ID"] == review_id].iloc[0].to_dict()
             with st.container(border=True):
+                st.caption(get_case_metadata(row))
                 render_history_comparison(row)
             
             with st.form(key=f"qav_form_{review_id}", clear_on_submit=True):
                 c_up1, c_up2 = st.columns([1, 2])
                 with c_up1:
-                    st.caption("修改期限 (需密碼)")
-                    use_new_date_q = st.checkbox("修改期限", key=f"qc_date_{review_id}")
-                    default_dq = datetime.now().date()
-                    if row.get("Due_Date") and row.get("Due_Date") != "未設定":
-                        try:
-                            default_dq = datetime.strptime(str(row["Due_Date"]).split(" ")[0], "%Y-%m-%d").date()
-                        except:
-                            pass
-                    new_due_date_q = st.date_input("新期限", value=default_dq, disabled=not use_new_date_q, key=f"qd_{review_id}")
-                    pwd_q = st.text_input("授權密碼", type="password", disabled=not use_new_date_q, key=f"qp_{review_id}")
                     q_imgs = st.file_uploader("補充截圖 (自動壓縮)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
                 with c_up2:
                     qav_notes = st.text_area("QAV 暫存筆記 (僅儲存不變更狀態)", value=str(row.get("QAV筆記", "")).replace("nan", ""), height=80)
@@ -428,13 +472,6 @@ with tab3:
                 btn_qav_return = c3.form_submit_button("🔄 需補充資訊 (退回)", use_container_width=True)
                 
                 if btn_qav_save or btn_qav_close or btn_qav_return:
-                    if use_new_date_q:
-                        if pwd_q != "1234qwer":
-                            st.error("密碼錯誤，無法修改期限！")
-                            st.stop()
-                        else:
-                            row["Due_Date"] = new_due_date_q.strftime("%Y-%m-%d")
-                            
                     row["QAV筆記"] = qav_notes.strip()
                     
                     if btn_qav_save:
@@ -462,7 +499,6 @@ with tab3:
                             row["狀態"] = STATUS_REOPENED
                             row["重複次數"] = str(rt + 1)
                             row["最後更新"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-                            row["Due_Date"] = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d") # 展延2天
                             
                             row["問題描述"] = str(row['問題描述']) + f"\n\n---\n📌 **[第 {rt+1} 次補充]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{reason.strip()}"
                             if q_imgs:
@@ -482,7 +518,7 @@ with tab4:
     search_id = st.selectbox("選擇查看詳細紀錄", df_display["Issue_ID"].tolist() if not df_display.empty else [], index=None)
     if search_id:
         r = df[df["Issue_ID"] == search_id].iloc[0]
-        st.write(f"**狀態:** {r['狀態']} | **重新討論:** {r['重複次數']} 次 | **預計完成日:** {r.get('Due_Date', '未設定')}")
+        st.write(f"**狀態:** {r['狀態']} | **重新討論:** {r['重複次數']} 次 | {get_case_metadata(r)}")
         if pd.notna(r.get('最終解決方案')) and str(r['最終解決方案']).strip():
             st.success(f"🏆 **最終解決方案:**\n\n{r['最終解決方案']}")
         render_history_comparison(r)
@@ -515,7 +551,8 @@ with tab5:
             df_summary = df_summary[df_summary["狀態"] == filter_status_display]
 
     # 只挑選主管最在意的欄位
-    view_cols = ["Issue_ID", "模組", "狀態", "處理人", "Due_Date", "問題描述", "最終解決方案"]
+    df_summary["開案天數"] = df_summary["建立日期"].apply(get_case_age)
+    view_cols = ["Issue_ID", "建立日期", "開案天數", "模組", "狀態", "處理人", "Due_Date", "問題描述", "最終解決方案"]
     
     # 顯示高質感資料表
     st.dataframe(
@@ -525,6 +562,8 @@ with tab5:
         height=350,
         column_config={
             "Issue_ID": st.column_config.TextColumn("編號", width="small"),
+            "建立日期": st.column_config.TextColumn("建立日期", width="small"),
+            "開案天數": st.column_config.TextColumn("開案天數", width="small"),
             "模組": st.column_config.TextColumn("模組", width="small"),
             "狀態": st.column_config.TextColumn("狀態", width="small"),
             "處理人": st.column_config.TextColumn("處理人", width="small"),
@@ -538,7 +577,7 @@ with tab5:
     search_id_tab5 = st.selectbox("選擇查看詳細紀錄", df_summary["Issue_ID"].tolist() if not df_summary.empty else [], index=None, key="select_tab5")
     if search_id_tab5:
         r = df[df["Issue_ID"] == search_id_tab5].iloc[0]
-        st.write(f"**狀態:** {r['狀態']} | **重新討論:** {r['重複次數']} 次 | **預計完成日:** {r.get('Due_Date', '未設定')}")
+        st.write(f"**狀態:** {r['狀態']} | **重新討論:** {r['重複次數']} 次 | {get_case_metadata(r)}")
         if pd.notna(r.get('最終解決方案')) and str(r['最終解決方案']).strip():
             st.success(f"🏆 **最終解決方案:**\n\n{r['最終解決方案']}")
         render_history_comparison(r)
@@ -561,3 +600,105 @@ with tab6:
             df_rework = df[df['重複_num'] > 0].sort_values(by='重複_num', ascending=False).head(5)
             if not df_rework.empty: st.dataframe(df_rework[["Issue_ID", "處理人", "重複_num", "狀態"]], hide_index=True)
             else: st.success("無複雜案件！")
+
+# --- Tab 7: QAV 期限管理 ---
+with tab7:
+    qav_secret = st.secrets.get("QAV_DUE_DATE_PASSWORD", "")
+    if not qav_secret:
+        st.error("尚未設定 QAV_DUE_DATE_PASSWORD。請依專案內的 Secrets 範本新增後重新啟動 App。")
+    elif not st.session_state.get("qav_due_date_authorized", False):
+        st.info("此頁僅供 QAV 核准展延與調整正式 Due date。")
+        with st.form("qav_due_date_login"):
+            qav_password = st.text_input("QAV 授權密碼", type="password")
+            unlock_due_dates = st.form_submit_button("解鎖期限管理")
+        if unlock_due_dates:
+            if hmac.compare_digest(qav_password, str(qav_secret)):
+                st.session_state["qav_due_date_authorized"] = True
+                st.rerun()
+            else:
+                st.error("密碼錯誤。")
+    else:
+        c_title, c_logout = st.columns([5, 1])
+        c_title.success("QAV 期限管理已解鎖")
+        if c_logout.button("鎖定頁面"):
+            st.session_state.pop("qav_due_date_authorized", None)
+            st.rerun()
+
+        requests_df = load_extension_requests()
+        if requests_df is not None:
+            pending_requests = requests_df[requests_df["status"] == "待QAV核准"].copy() if not requests_df.empty else pd.DataFrame()
+            st.subheader("待核准展延申請")
+            if pending_requests.empty:
+                st.info("目前沒有待核准的展延申請。")
+            else:
+                st.dataframe(
+                    pending_requests[["id", "issue_id", "current_due_date", "requested_due_date", "requested_by", "reason", "requested_at"]],
+                    use_container_width=True, hide_index=True
+                )
+                request_id = st.selectbox("選擇展延申請", pending_requests["id"].tolist(), key="pending_extension_id")
+                selected_request = pending_requests[pending_requests["id"] == request_id].iloc[0]
+                with st.form(f"review_extension_{request_id}"):
+                    reviewer = st.text_input("QAV 審核人 ⭐ (必填)")
+                    review_note = st.text_area("審核說明")
+                    approve_col, reject_col = st.columns(2)
+                    approve = approve_col.form_submit_button("核准並更新 Due date", type="primary", use_container_width=True)
+                    reject = reject_col.form_submit_button("駁回申請", use_container_width=True)
+                if approve or reject:
+                    if not reviewer.strip():
+                        st.error("請填寫 QAV 審核人。")
+                    else:
+                        try:
+                            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+                            if approve:
+                                supabase.table(DB_TABLE).update({
+                                    "due_date": str(selected_request["requested_due_date"]), "updated_date": now
+                                }).eq("issue_id", selected_request["issue_id"]).execute()
+                            supabase.table(EXTENSION_REQUESTS_TABLE).update({
+                                "status": "核准" if approve else "駁回",
+                                "review_note": review_note.strip(), "reviewed_by": reviewer.strip(),
+                                "reviewed_at": datetime.now().isoformat()
+                            }).eq("id", int(request_id)).execute()
+                            st.success("已核准並更新 Due date。" if approve else "已駁回展延申請，原 Due date 維持不變。")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as error:
+                            st.error(f"審核失敗：{error}")
+
+            st.divider()
+            st.subheader("QAV 直接調整 Due date")
+            direct_issue_id = st.selectbox("選擇案件", df["Issue_ID"].tolist(), index=None, key="qav_due_issue")
+            if direct_issue_id:
+                direct_row = df[df["Issue_ID"] == direct_issue_id].iloc[0].to_dict()
+                current_due_date = parse_date(direct_row.get("Due_Date"))
+                st.caption(get_case_metadata(direct_row))
+                if not current_due_date:
+                    st.error("案件目前沒有有效的 Due date，無法調整。")
+                else:
+                    with st.form(f"qav_direct_due_{direct_issue_id}"):
+                        new_due_date = st.date_input("新 Due date", value=current_due_date, min_value=date.today())
+                        qav_name = st.text_input("QAV 調整人 ⭐ (必填)")
+                        direct_reason = st.text_area("調整原因 ⭐ (必填)")
+                        apply_direct_change = st.form_submit_button("更新 Due date", type="primary")
+                    if apply_direct_change:
+                        if not qav_name.strip() or not direct_reason.strip():
+                            st.error("請填寫 QAV 調整人與調整原因。")
+                        elif new_due_date == current_due_date:
+                            st.error("新 Due date 與目前日期相同。")
+                        else:
+                            try:
+                                now = datetime.now()
+                                supabase.table(DB_TABLE).update({
+                                    "due_date": new_due_date.isoformat(), "updated_date": now.strftime("%Y-%m-%d %H:%M")
+                                }).eq("issue_id", direct_issue_id).execute()
+                                supabase.table(EXTENSION_REQUESTS_TABLE).insert({
+                                    "issue_id": direct_issue_id, "current_due_date": current_due_date.isoformat(),
+                                    "requested_due_date": new_due_date.isoformat(), "reason": direct_reason.strip(),
+                                    "requested_by": qav_name.strip(), "status": "核准", "request_type": "QAV直接調整",
+                                    "review_note": direct_reason.strip(), "reviewed_by": qav_name.strip(),
+                                    "reviewed_at": now.isoformat()
+                                }).execute()
+                                st.success("Due date 已更新，並已寫入異動紀錄。")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as error:
+                                st.error(f"更新失敗：{error}")
