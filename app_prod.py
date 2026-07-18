@@ -35,7 +35,7 @@ st.set_page_config(page_title=PAGE_TITLE, layout="wide")
 @st.cache_resource
 def init_supabase() -> Client:
     url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
+    key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", st.secrets["SUPABASE_KEY"])
     return create_client(url, key)
 
 supabase = init_supabase()
@@ -101,7 +101,10 @@ def load_extension_requests():
         response = supabase.table(EXTENSION_REQUESTS_TABLE).select("*").order("requested_at", desc=True).execute()
         return pd.DataFrame(response.data or [])
     except Exception as error:
-        st.error(f"無法讀取展延申請。請先建立資料表：{error}")
+        if "permission denied" in str(error).lower():
+            st.error("無法讀取展延申請：請在正式 App Secrets 設定 SUPABASE_SERVICE_ROLE_KEY，然後重新部署 App。")
+        else:
+            st.error(f"無法讀取展延申請：{error}")
         return None
 
 # ==========================================
@@ -158,6 +161,29 @@ def send_teams_qav_notification(title: str, text: str):
         return response.status_code in (200, 201, 202)
     except Exception as e:
         print(f"❌ [Debug] Teams 通知發送失敗: {e}")
+        return False
+
+def send_excel_vendor_update(row, latest_reply):
+    """將 Excel 匯入案件的完成回覆交給 Power Automate 回填來源列。"""
+    issue_id = str(row.get("Issue_ID", ""))
+    webhook_url = st.secrets.get("EXCEL_UPDATE_WEBHOOK", "")
+    if not webhook_url or not issue_id.startswith("TWD-SP-"):
+        return None
+    try:
+        response = requests.post(
+            webhook_url,
+            json={
+                "issue_id": issue_id,
+                "status": row.get("狀態", ""),
+                "vendor_reply": latest_reply,
+                "assignee": row.get("處理人", ""),
+                "updated_at": row.get("最後更新", ""),
+            },
+            timeout=10,
+        )
+        return response.status_code in (200, 201, 202)
+    except requests.RequestException as error:
+        print(f"Excel update callback failed: {error}")
         return False
 
 # ==========================================
@@ -330,6 +356,7 @@ with tab1:
                 
                 # 發送通知給 QAV
                 if btn_submit:
+                    excel_updated = send_excel_vendor_update(row, current_reply_content)
                     notify_title = f"🚨 [待覆核] 案件 {row['Issue_ID']} 已由百昌處理完成"
                     notify_body = (
                         f"**案件編號**: {row['Issue_ID']}  \n"
@@ -345,6 +372,8 @@ with tab1:
                     success = send_teams_qav_notification(notify_title, notify_body)
                     if success:
                         st.success("🚀 處理完成！已送交確認並「成功」發送 Teams 通知，即將重新整理頁面...")
+                        if excel_updated is False:
+                            st.warning("TWD 已完成，但 Excel 回填失敗；請查看 Power Automate 執行紀錄。")
                         time.sleep(1.5)
                         st.rerun()
                     else:
@@ -409,9 +438,9 @@ with tab2:
         due_choice = c4.radio("Due date 快速設定", list(due_options), index=2, horizontal=True)
         custom_date = c4.date_input(
             "自訂 Due date", value=(datetime.now() + timedelta(days=7)).date(),
-            min_value=datetime.now().date(), disabled=due_choice != "自訂日期"
+            min_value=datetime.now().date()
         )
-        c4.caption("優先級與期限可分開設定；選擇「自訂日期」後，可直接從日曆挑選。")
+        c4.caption("需要自行設定時，先選「自訂日期」，再從日曆挑選日期。")
         link_id = c5.text_input("延續自 ID")
         
         desc = st.text_area("詳細問題描述 ⭐ (必填)")

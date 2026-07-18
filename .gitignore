@@ -1,3 +1,6 @@
 .streamlit/secrets.toml
+.obsidian/
+supabase/functions/.env
+supabase/functions/.env.*
 __pycache__/
 *.pyc

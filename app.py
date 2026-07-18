@@ -133,6 +133,29 @@ def send_teams_qav_notification(title: str, text: str):
         print(f"❌ [Debug] Teams 通知發送失敗: {e}")
         return False
 
+def send_excel_vendor_update(row, latest_reply):
+    """將 Excel 匯入案件的完成回覆交給 Power Automate 回填來源列。"""
+    issue_id = str(row.get("Issue_ID", ""))
+    webhook_url = st.secrets.get("EXCEL_UPDATE_WEBHOOK", "")
+    if not webhook_url or not issue_id.startswith("TWD-SP-"):
+        return None
+    try:
+        response = requests.post(
+            webhook_url,
+            json={
+                "issue_id": issue_id,
+                "status": row.get("狀態", ""),
+                "vendor_reply": latest_reply,
+                "assignee": row.get("處理人", ""),
+                "updated_at": row.get("最後更新", ""),
+            },
+            timeout=10,
+        )
+        return response.status_code in (200, 201, 202)
+    except requests.RequestException as error:
+        print(f"Excel update callback failed: {error}")
+        return False
+
 # ==========================================
 # 🖼️ Helpers: 圖片壓縮與雲端圖庫上傳
 # ==========================================
@@ -319,6 +342,7 @@ with tab1:
                 
                 # 發送通知給 QAV
                 if btn_submit:
+                    excel_updated = send_excel_vendor_update(row, current_reply_content)
                     notify_title = f"🚨 [待覆核] 案件 {row['Issue_ID']} 已由百昌處理完成"
                     notify_body = (
                         f"**案件編號**: {row['Issue_ID']}  \n"
@@ -334,6 +358,8 @@ with tab1:
                     success = send_teams_qav_notification(notify_title, notify_body)
                     if success:
                         st.success("🚀 處理完成！已送交確認並「成功」發送 Teams 通知，即將重新整理頁面...")
+                        if excel_updated is False:
+                            st.warning("TWD 已完成，但 Excel 回填失敗；請查看 Power Automate 執行紀錄。")
                         time.sleep(1.5)
                         st.rerun()
                     else:
