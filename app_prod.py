@@ -308,7 +308,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📂 歷史檔案庫", 
     f"📊 案件總表({total_count})",   # <-- 這是主管的新頁籤
     "📈 管理報表",
-    "🔐 QAV 期限管理"
+    "⏳ 展延申請待辦"
 ])
 
 # --- Tab 1: 百昌待處理清單 ---
@@ -642,33 +642,17 @@ with tab6:
             if not df_rework.empty: st.dataframe(df_rework[["Issue_ID", "處理人", "重複_num", "狀態"]], hide_index=True)
             else: st.success("無複雜案件！")
 
-# --- Tab 7: QAV 期限管理 ---
+# --- Tab 7: 展延申請待辦 ---
 with tab7:
     qav_secret = st.secrets.get("QAV_DUE_DATE_PASSWORD", "")
     if not qav_secret:
         st.error("尚未設定 QAV_DUE_DATE_PASSWORD。請依專案內的 Secrets 範本新增後重新啟動 App。")
-    elif not st.session_state.get("qav_due_date_authorized", False):
-        st.info("此頁僅供 QAV 核准展延與調整正式 Due date。")
-        with st.form("qav_due_date_login"):
-            qav_password = st.text_input("QAV 授權密碼", type="password")
-            unlock_due_dates = st.form_submit_button("解鎖期限管理")
-        if unlock_due_dates:
-            if hmac.compare_digest(qav_password, str(qav_secret)):
-                st.session_state["qav_due_date_authorized"] = True
-                st.rerun()
-            else:
-                st.error("密碼錯誤。")
     else:
-        c_title, c_logout = st.columns([5, 1])
-        c_title.success("QAV 期限管理已解鎖")
-        if c_logout.button("鎖定頁面"):
-            st.session_state.pop("qav_due_date_authorized", None)
-            st.rerun()
-
+        st.subheader("展延申請待辦")
+        st.caption("選擇申請後，輸入 QAV 密碼核准或駁回。核准會自動更新案件的 Due date。")
         requests_df = load_extension_requests()
         if requests_df is not None:
             pending_requests = requests_df[requests_df["status"] == "待QAV核准"].copy() if not requests_df.empty else pd.DataFrame()
-            st.subheader("待核准展延申請")
             if pending_requests.empty:
                 st.info("目前沒有待核准的展延申請。")
             else:
@@ -679,63 +663,70 @@ with tab7:
                 request_id = st.selectbox("選擇展延申請", pending_requests["id"].tolist(), key="pending_extension_id")
                 selected_request = pending_requests[pending_requests["id"] == request_id].iloc[0]
                 with st.form(f"review_extension_{request_id}"):
+                    st.info(f"核准後 Due date 將更新為：{selected_request['requested_due_date']}")
                     review_note = st.text_area("審核說明")
+                    approval_password = st.text_input("QAV 授權密碼", type="password")
                     approve_col, reject_col = st.columns(2)
                     approve = approve_col.form_submit_button("核准並更新 Due date", type="primary", use_container_width=True)
                     reject = reject_col.form_submit_button("駁回申請", use_container_width=True)
                 if approve or reject:
-                    try:
-                        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-                        if approve:
-                            supabase.table(DB_TABLE).update({
-                                "due_date": str(selected_request["requested_due_date"]), "updated_date": now
-                            }).eq("issue_id", selected_request["issue_id"]).execute()
-                        extension_supabase.table(EXTENSION_REQUESTS_TABLE).update({
-                            "status": "核准" if approve else "駁回",
-                            "review_note": review_note.strip(), "reviewed_by": "QAV 密碼授權",
-                            "reviewed_at": datetime.now().isoformat()
-                        }).eq("id", int(request_id)).execute()
-                        st.success("已核准並更新 Due date。" if approve else "已駁回展延申請，原 Due date 維持不變。")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as error:
-                        st.error(f"審核失敗：{error}")
+                    if not hmac.compare_digest(str(approval_password), str(qav_secret)):
+                        st.error("密碼錯誤，未變更案件 Due date。")
+                    else:
+                        try:
+                            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+                            if approve:
+                                supabase.table(DB_TABLE).update({
+                                    "due_date": str(selected_request["requested_due_date"]), "updated_date": now
+                                }).eq("issue_id", selected_request["issue_id"]).execute()
+                            extension_supabase.table(EXTENSION_REQUESTS_TABLE).update({
+                                "status": "核准" if approve else "駁回",
+                                "review_note": review_note.strip(), "reviewed_by": "QAV 密碼授權",
+                                "reviewed_at": datetime.now().isoformat()
+                            }).eq("id", int(request_id)).execute()
+                            st.success("已核准並更新 Due date。" if approve else "已駁回展延申請，原 Due date 維持不變。")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as error:
+                            st.error(f"審核失敗：{error}")
 
             st.divider()
-            st.subheader("QAV 直接調整 Due date")
-            direct_issue_id = st.selectbox("選擇案件", df["Issue_ID"].tolist(), index=None, key="qav_due_issue")
-            if direct_issue_id:
-                direct_row = df[df["Issue_ID"] == direct_issue_id].iloc[0].to_dict()
-                current_due_date = parse_date(direct_row.get("Due_Date"))
-                st.caption(get_case_metadata(direct_row))
-                if not current_due_date:
-                    st.error("案件目前沒有有效的 Due date，無法調整。")
-                else:
-                    with st.form(f"qav_direct_due_{direct_issue_id}"):
-                        new_due_date = st.date_input("新 Due date", value=current_due_date, min_value=date.today())
-                        qav_name = st.text_input("QAV 調整人 ⭐ (必填)")
-                        direct_reason = st.text_area("調整原因 ⭐ (必填)")
-                        apply_direct_change = st.form_submit_button("更新 Due date", type="primary")
-                    if apply_direct_change:
-                        if not qav_name.strip() or not direct_reason.strip():
-                            st.error("請填寫 QAV 調整人與調整原因。")
-                        elif new_due_date == current_due_date:
-                            st.error("新 Due date 與目前日期相同。")
-                        else:
-                            try:
-                                now = datetime.now()
-                                supabase.table(DB_TABLE).update({
-                                    "due_date": new_due_date.isoformat(), "updated_date": now.strftime("%Y-%m-%d %H:%M")
-                                }).eq("issue_id", direct_issue_id).execute()
-                                extension_supabase.table(EXTENSION_REQUESTS_TABLE).insert({
-                                    "issue_id": direct_issue_id, "current_due_date": current_due_date.isoformat(),
-                                    "requested_due_date": new_due_date.isoformat(), "reason": direct_reason.strip(),
-                                    "requested_by": qav_name.strip(), "status": "核准", "request_type": "QAV直接調整",
-                                    "review_note": direct_reason.strip(), "reviewed_by": qav_name.strip(),
-                                    "reviewed_at": now.isoformat()
-                                }).execute()
-                                st.success("Due date 已更新，並已寫入異動紀錄。")
-                                time.sleep(1)
-                                st.rerun()
-                            except Exception as error:
-                                st.error(f"更新失敗：{error}")
+            with st.expander("其他 Due date 調整（需輸入 QAV 密碼）"):
+                direct_issue_id = st.selectbox("選擇案件", df["Issue_ID"].tolist(), index=None, key="qav_due_issue")
+                if direct_issue_id:
+                    direct_row = df[df["Issue_ID"] == direct_issue_id].iloc[0].to_dict()
+                    current_due_date = parse_date(direct_row.get("Due_Date"))
+                    st.caption(get_case_metadata(direct_row))
+                    if not current_due_date:
+                        st.error("案件目前沒有有效的 Due date，無法調整。")
+                    else:
+                        with st.form(f"qav_direct_due_{direct_issue_id}"):
+                            new_due_date = st.date_input("新 Due date", value=current_due_date, min_value=date.today())
+                            direct_reason = st.text_area("調整原因 ⭐ (必填)")
+                            direct_password = st.text_input("QAV 授權密碼", type="password")
+                            apply_direct_change = st.form_submit_button("更新 Due date", type="primary")
+                        if apply_direct_change:
+                            if not hmac.compare_digest(str(direct_password), str(qav_secret)):
+                                st.error("密碼錯誤，未變更案件 Due date。")
+                            elif not direct_reason.strip():
+                                st.error("請填寫調整原因。")
+                            elif new_due_date == current_due_date:
+                                st.error("新 Due date 與目前日期相同。")
+                            else:
+                                try:
+                                    now = datetime.now()
+                                    supabase.table(DB_TABLE).update({
+                                        "due_date": new_due_date.isoformat(), "updated_date": now.strftime("%Y-%m-%d %H:%M")
+                                    }).eq("issue_id", direct_issue_id).execute()
+                                    extension_supabase.table(EXTENSION_REQUESTS_TABLE).insert({
+                                        "issue_id": direct_issue_id, "current_due_date": current_due_date.isoformat(),
+                                        "requested_due_date": new_due_date.isoformat(), "reason": direct_reason.strip(),
+                                        "requested_by": "QAV 密碼授權", "status": "核准", "request_type": "QAV直接調整",
+                                        "review_note": direct_reason.strip(), "reviewed_by": "QAV 密碼授權",
+                                        "reviewed_at": now.isoformat()
+                                    }).execute()
+                                    st.success("Due date 已更新，並已寫入異動紀錄。")
+                                    time.sleep(1)
+                                    st.rerun()
+                                except Exception as error:
+                                    st.error(f"更新失敗：{error}")
