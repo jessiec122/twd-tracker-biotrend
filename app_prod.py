@@ -35,7 +35,8 @@ st.set_page_config(page_title=PAGE_TITLE, layout="wide")
 @st.cache_resource
 def init_supabase() -> Client:
     url = st.secrets["SUPABASE_URL"]
-    key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", st.secrets["SUPABASE_KEY"])
+    service_key = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
+    key = service_key if service_key and service_key.isascii() and not service_key.startswith("replace-") else st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
 
 supabase = init_supabase()
