@@ -2,7 +2,7 @@
 # ⚙️ Configuration (系統參數與配置設定)
 # ==========================================
 PAGE_TITLE = "CMMS 問題追蹤系統（測試區）"
-VENDORS_LIST = ["未指派", "王俊", "浩淳", "芸郁"]
+VENDORS_LIST = ["未指派", "James", "李萍", "芸郁"]
 MODULE_OPTIONS = ["CMMS Overall", "工單管理", "設備管理", "預防保養", "其他"]
 PRIORITY_OPTIONS = ["一個月內", "一周內", "急"]
 IMG_THUMB_WIDTH = 300
