@@ -35,11 +35,18 @@ st.set_page_config(page_title=PAGE_TITLE, layout="wide")
 @st.cache_resource
 def init_supabase() -> Client:
     url = st.secrets["SUPABASE_URL"]
-    service_key = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
-    key = service_key if service_key and service_key.isascii() and not service_key.startswith("replace-") else st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
+    return create_client(url, st.secrets["SUPABASE_KEY"])
+
+@st.cache_resource
+def init_extension_supabase() -> Client | None:
+    """展延紀錄使用獨立的 server-only 金鑰，不影響主案件清單。"""
+    key = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
+    if not key or not key.isascii() or key.startswith("replace-"):
+        return None
+    return create_client(st.secrets["SUPABASE_URL"], key)
 
 supabase = init_supabase()
+extension_supabase = init_extension_supabase()
 
 # 取得資料庫與儲存空間名稱 (可透過 Streamlit Secrets 動態配置)
 DB_TABLE = st.secrets.get("DB_TABLE", "issues_prod")
@@ -98,8 +105,11 @@ def get_case_metadata(row):
     )
 
 def load_extension_requests():
+    if extension_supabase is None:
+        st.error("展延功能尚未設定有效的 SUPABASE_SERVICE_ROLE_KEY。主案件功能仍可正常使用。")
+        return None
     try:
-        response = supabase.table(EXTENSION_REQUESTS_TABLE).select("*").order("requested_at", desc=True).execute()
+        response = extension_supabase.table(EXTENSION_REQUESTS_TABLE).select("*").order("requested_at", desc=True).execute()
         return pd.DataFrame(response.data or [])
     except Exception as error:
         if "permission denied" in str(error).lower():
@@ -402,11 +412,13 @@ with tab1:
                         submit_extension = st.form_submit_button("送出展延申請", use_container_width=True)
 
                     if submit_extension:
-                        if not requester.strip() or not extension_reason.strip():
+                        if extension_supabase is None:
+                            st.error("展延功能尚未設定有效的 SUPABASE_SERVICE_ROLE_KEY。請聯絡 QAV。")
+                        elif not requester.strip() or not extension_reason.strip():
                             st.error("請填寫申請人與展延原因。")
                         else:
                             try:
-                                supabase.table(EXTENSION_REQUESTS_TABLE).insert({
+                                extension_supabase.table(EXTENSION_REQUESTS_TABLE).insert({
                                     "issue_id": row["Issue_ID"],
                                     "current_due_date": current_due_date.isoformat(),
                                     "requested_due_date": requested_due_date.isoformat(),
@@ -683,7 +695,7 @@ with tab7:
                                 supabase.table(DB_TABLE).update({
                                     "due_date": str(selected_request["requested_due_date"]), "updated_date": now
                                 }).eq("issue_id", selected_request["issue_id"]).execute()
-                            supabase.table(EXTENSION_REQUESTS_TABLE).update({
+                            extension_supabase.table(EXTENSION_REQUESTS_TABLE).update({
                                 "status": "核准" if approve else "駁回",
                                 "review_note": review_note.strip(), "reviewed_by": reviewer.strip(),
                                 "reviewed_at": datetime.now().isoformat()
@@ -720,7 +732,7 @@ with tab7:
                                 supabase.table(DB_TABLE).update({
                                     "due_date": new_due_date.isoformat(), "updated_date": now.strftime("%Y-%m-%d %H:%M")
                                 }).eq("issue_id", direct_issue_id).execute()
-                                supabase.table(EXTENSION_REQUESTS_TABLE).insert({
+                                extension_supabase.table(EXTENSION_REQUESTS_TABLE).insert({
                                     "issue_id": direct_issue_id, "current_due_date": current_due_date.isoformat(),
                                     "requested_due_date": new_due_date.isoformat(), "reason": direct_reason.strip(),
                                     "requested_by": qav_name.strip(), "status": "核准", "request_type": "QAV直接調整",
