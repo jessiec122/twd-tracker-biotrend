@@ -37,7 +37,6 @@ def init_supabase() -> Client:
     url = st.secrets["SUPABASE_URL"]
     return create_client(url, st.secrets["SUPABASE_KEY"])
 
-@st.cache_resource
 def init_extension_supabase() -> Client | None:
     """展延紀錄使用獨立的 server-only 金鑰，不影響主案件清單。"""
     key = str(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY", "")).strip()
