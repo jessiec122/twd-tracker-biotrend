@@ -4,3 +4,8 @@ supabase/functions/.env
 supabase/functions/.env.*
 __pycache__/
 *.pyc
+node_modules/
+test-results/
+.pytest_cache/
+.codex_tmp/ux-venv/
+.codex_tmp/ux-review/pg/
