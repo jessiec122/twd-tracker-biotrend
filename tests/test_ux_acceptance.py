@@ -43,6 +43,27 @@ def choose_qav(at, issue_id):
     assert not at.exception
 
 
+def test_vendor_worklist_shows_problem_description_instead_of_latest_result(review_app):
+    at, _ = review_app
+    worklist = at.dataframe[0].value
+    assert "問題描述" in worklist.columns
+    assert "最新處理結果" not in worklist.columns
+    assert worklist.loc[worklist["Issue_ID"] == "VENDOR-A", "問題描述"].iloc[0] == "Isolated test issue VENDOR-A"
+
+
+def test_vendor_can_submit_one_character_in_original_reply_field(review_app):
+    at, state = review_app
+    by_label(at.selectbox, "選擇處理編號").select("VENDOR-A").run()
+    at.text_area(key="vendor_VENDOR-A_reply").input("好").run()
+
+    at.button(key="vendor_VENDOR-A_submit").click().run()
+
+    assert not at.exception
+    assert not at.error
+    assert state.issue("VENDOR-A")["status"] == "待覆核"
+    assert "處理內容與結果：好" in state.issue("VENDOR-A")["vendor_reply"]
+
+
 def test_wrong_close_preserves_reason_and_notes_without_writes(review_app):
     at, state = review_app
     choose_qav(at, "REVIEW-A")

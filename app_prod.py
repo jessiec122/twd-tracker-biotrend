@@ -307,7 +307,6 @@ def persist_draft_widget(issue_id, role):
     if role == "vendor":
         values = {
             "reply": st.session_state.get(f"{prefix}_reply", prior.get("reply", "")),
-            "verification": st.session_state.get(f"{prefix}_verification", prior.get("verification", "")),
             "assignee": st.session_state.get(f"{prefix}_assignee", prior.get("assignee", "")),
             "images": capture_uploads(st.session_state.get(f"{prefix}_images")) or prior.get("images", []),
             "documents": capture_uploads(st.session_state.get(f"{prefix}_documents")) or prior.get("documents", []),
@@ -536,8 +535,13 @@ with tab1:
     if not df_active.empty:
         df_active["健康度"] = df_active["Due_Date"].apply(get_due_date_status)
         df_active["開案天數"] = df_active["建立日期"].apply(get_case_age)
-        df_active["最新處理結果"] = df_active["百昌回覆"].apply(get_latest_vendor_reply)
-        st.dataframe(df_active[["Issue_ID", "建立日期", "開案天數", "最新處理結果", "Due_Date", "處理人", "健康度"]], use_container_width=True, height=250, hide_index=True)
+        st.dataframe(
+            df_active[["Issue_ID", "建立日期", "開案天數", "問題描述", "Due_Date", "處理人", "健康度"]],
+            column_config={"問題描述": st.column_config.TextColumn("問題描述", width="large")},
+            use_container_width=True,
+            height=250,
+            hide_index=True,
+        )
         st.divider()
         
         update_id = st.selectbox("選擇處理編號", options=df_active["Issue_ID"].tolist(), index=None, placeholder="請選擇要處理的 Issue ID...")
@@ -548,14 +552,13 @@ with tab1:
                 st.caption(get_case_metadata(row))
                 render_case_extension_history(update_id)
                 st.markdown(f"**💬 台康問題：**\n\n{str(row['問題描述']).replace('\n', '  \n')}")
-                st.success("**最新百昌處理結果**\n\n" + get_latest_vendor_reply(row.get("百昌回覆")))
                 render_image_gallery(row.get("截圖_Base64", ""), "台康圖片")
                 render_case_documents(update_id, "vendor_detail")
 
             form_prefix = f"vendor_{update_id}"
             clear_saved_form_state(form_prefix)
             vendor_draft = st.session_state.setdefault("case_drafts", {}).get(f"vendor:{update_id}", {})
-            for field, draft_key in (("reply", "reply"), ("verification", "verification"), ("assignee", "assignee")):
+            for field, draft_key in (("reply", "reply"), ("assignee", "assignee")):
                 widget_key = f"{form_prefix}_{field}"
                 if widget_key not in st.session_state and draft_key in vendor_draft:
                     st.session_state[widget_key] = vendor_draft[draft_key]
@@ -566,8 +569,7 @@ with tab1:
                 v_imgs = st.file_uploader("上傳截圖 (自動壓縮)", type=["png", "jpg", "jpeg"], accept_multiple_files=True, key=f"{form_prefix}_images", on_change=persist_draft_widget, args=(update_id, "vendor"))
                 v_docs = st.file_uploader("上傳處理文件 (XLSX, XLS, CSV, PDF, DOCX；每檔 10 MB)", type=["xlsx", "xls", "csv", "pdf", "docx"], accept_multiple_files=True, key=f"{form_prefix}_documents", on_change=persist_draft_widget, args=(update_id, "vendor"))
             with col_up2:
-                reply_text = st.text_area("處理內容與結果 (至少 10 字；暫存不需要填完)", height=100, key=f"{form_prefix}_reply", on_change=persist_draft_widget, args=(update_id, "vendor"))
-                verification_text = st.text_area("驗證方式與結果 (送交確認必填；暫存不需要填完)", height=80, key=f"{form_prefix}_verification", on_change=persist_draft_widget, args=(update_id, "vendor"))
+                reply_text = st.text_area("處理內容與結果 (至少 1 字；暫存不需要填完)", height=100, key=f"{form_prefix}_reply", on_change=persist_draft_widget, args=(update_id, "vendor"))
                 st.caption(f"歷史對話：\n{str(row['百昌回覆']).replace('\n', '  \n')}")
             staged_vendor = st.session_state["case_drafts"].get(f"vendor:{update_id}", {})
             st.caption("輸入內容及已選附件會在目前瀏覽器工作階段依案件暫存；切換案件不會提交狀態。")
@@ -586,20 +588,20 @@ with tab1:
                 st.rerun()
 
             if btn_draft:
-                    vendor_draft = {
-                        "reply": reply_text, "verification": verification_text, "assignee": new_assignee,
-                        "images": capture_uploads(v_imgs), "documents": capture_uploads(v_docs),
-                    }
-                    save_working_draft(update_id, "vendor", vendor_draft)
-                    st.success("草稿已暫存於目前瀏覽器工作階段，不會更新案件或狀態。")
+                vendor_draft = {
+                    "reply": reply_text, "assignee": new_assignee,
+                    "images": capture_uploads(v_imgs), "documents": capture_uploads(v_docs),
+                }
+                save_working_draft(update_id, "vendor", vendor_draft)
+                st.success("草稿已暫存於目前瀏覽器工作階段，不會更新案件或狀態。")
 
             if btn_save or btn_submit:
                 save_working_draft(update_id, "vendor", {
-                    "reply": reply_text, "verification": verification_text, "assignee": new_assignee,
+                    "reply": reply_text, "assignee": new_assignee,
                     "images": capture_uploads(v_imgs), "documents": capture_uploads(v_docs),
                 })
-                if btn_submit and (len(reply_text.strip()) < 10 or len(verification_text.strip()) < 10):
-                    st.error("送交確認前，請各填寫至少 10 字的處理內容及驗證方式／結果。輸入內容已保留。")
+                if btn_submit and not reply_text.strip():
+                    st.error("送交確認前，請輸入至少 1 個字的處理內容與結果。輸入內容已保留。")
                 else:
                     if btn_submit: row["狀態"] = STATUS_REVIEW
                     elif row["狀態"] == STATUS_REPORTED: row["狀態"] = STATUS_IN_PROGRESS
@@ -609,16 +611,13 @@ with tab1:
 
                     current_reply_content = "(僅更新截圖或文件)"
                     retained_draft = st.session_state["case_drafts"][f"vendor:{update_id}"]
-                    if reply_text.strip() or verification_text.strip() or retained_draft.get("images") or retained_draft.get("documents"):
+                    if reply_text.strip() or retained_draft.get("images") or retained_draft.get("documents"):
                         count = str(row['百昌回覆']).count("💬 **[第") + 1
-                        current_reply_content = (
-                            f"處理內容：{reply_text.strip() or '請參閱附件'}\n"
-                            f"驗證方式與結果：{verification_text.strip() or '請參閱附件'}"
-                        )
+                        current_reply_content = f"處理內容與結果：{reply_text.strip() or '請參閱附件'}"
                         draft_to_commit = st.session_state["case_drafts"][f"vendor:{update_id}"]
                         operation_id = draft_to_commit["operation_id"]
-                        if draft_to_commit.get("pending_text") != (reply_text, verification_text):
-                            draft_to_commit["pending_text"] = (reply_text, verification_text)
+                        if draft_to_commit.get("pending_text") != reply_text:
+                            draft_to_commit["pending_text"] = reply_text
                             draft_to_commit["pending_entry"] = f"💬 **[第 {count} 次回覆]** ({datetime.now().strftime('%Y-%m-%d %H:%M')}):\n{current_reply_content}"
                         row["百昌回覆"] = append_reply_once(row["百昌回覆"], draft_to_commit["pending_entry"])
 

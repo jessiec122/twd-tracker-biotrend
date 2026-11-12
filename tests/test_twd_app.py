@@ -134,7 +134,6 @@ def test_widget_autosave_keeps_vendor_and_qav_drafts_separate_per_case(helpers, 
     qav_file.name = "qav.docx"
     state.update({
         "vendor_TWD-901_reply": "Vendor's unfinished reply",
-        "vendor_TWD-901_verification": "Vendor's test still in progress",
         "vendor_TWD-901_documents": [vendor_file],
         "qav_TWD-902_notes": "QAV notes still being edited",
         "qav_TWD-902_documents": [qav_file],
